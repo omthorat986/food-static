@@ -362,15 +362,16 @@ def init_db(seed_demo=False):
         seed_demo_accounts(conn)
 
     conn.close()
+    return True
 
 def seed_demo_accounts(conn=None):
     """
     Seeds default demo accounts for local development and self-testing.
     CRITICAL: Never seeds demo accounts when APP_ENV == 'production'.
     """
-    if APP_ENV == "production":
+    if APP_ENV == "production" or os.environ.get("APP_ENV", "").lower() == "production":
         app_logger.warning("Refusing to seed demo accounts in production environment (APP_ENV=production).")
-        return False
+        raise RuntimeError("Refusing to seed demo accounts in production environment (APP_ENV=production).")
 
     should_close = False
     if conn is None:
