@@ -26,7 +26,7 @@ This runbook provides complete, step-by-step instructions for deploying the **Fo
 ### Step 1: Create the Amazon S3 Bucket
 1. Open the [AWS S3 Console](https://s3.console.aws.amazon.com/).
 2. Click **Create bucket**:
-   - **Bucket name**: `YOUR_BUCKET_NAME` (must be globally unique across all AWS accounts).
+   - **Bucket name**: `foodies-uploads-2026` (must be globally unique across all AWS accounts).
    - **AWS Region**: Select your target region (e.g., `us-east-1` or `ap-south-1`).
    - **Block Public Access**: Keep **"Block all public access" ENABLED (Checked)**.
    - **Default Encryption**: **Server-side encryption with Amazon S3 managed keys (SSE-S3 / AES256)**.
@@ -34,8 +34,7 @@ This runbook provides complete, step-by-step instructions for deploying the **Fo
 3. Click **Create bucket**.
 4. Open the newly created bucket, click the **Permissions** tab:
    - Scroll down to **Bucket Policy** and click **Edit**.
-   - Copy the contents of `deploy/s3-bucket-policy.json`.
-   - Replace `YOUR_BUCKET_NAME` with your actual bucket name.
+   - Copy the contents of `deploy/s3-bucket-policy.json` (configured with `foodies-uploads-2026`).
    - Click **Save changes**.
 
 > [!NOTE]
@@ -48,8 +47,7 @@ This runbook provides complete, step-by-step instructions for deploying the **Fo
 1. Open the [AWS IAM Console](https://console.aws.amazon.com/iam/).
 2. Under **Access management**, select **Policies** -> **Create policy**:
    - Choose the **JSON** editor.
-   - Paste the contents of `deploy/iam-policy.json`.
-   - Replace `YOUR_BUCKET_NAME` with your actual bucket name.
+   - Paste the contents of `deploy/iam-policy.json` (configured with `foodies-uploads-2026`).
    - Click **Next**. Name the policy: `FoodiesEC2S3CloudWatchPolicy`.
    - Click **Create policy**.
 3. Under **Access management**, select **Roles** -> **Create role**:
@@ -199,7 +197,7 @@ sudo bash ~/foodies-repo/deploy/scripts/update-foodies.sh ~/foodies-repo
    APP_ENV=production
    SECRET_KEY=<PASTE_GENERATED_32_CHAR_HEX_KEY>
    STORAGE_MODE=s3
-   S3_BUCKET=YOUR_BUCKET_NAME
+   S3_BUCKET=foodies-uploads-2026
    AWS_REGION=us-east-1
    DATABASE_PATH=/var/lib/foodies/foodies.db
    COOKIE_SECURE=true
@@ -346,7 +344,7 @@ sudo certbot renew --dry-run
 ### Step 17: Execute Automated Post-Deployment Smoke Test
 Run the automated verification script:
 ```bash
-sudo bash /opt/foodies/deploy/scripts/smoke-test.sh my-foodies.duckdns.org YOUR_BUCKET_NAME us-east-1
+sudo bash /opt/foodies/deploy/scripts/smoke-test.sh my-foodies.duckdns.org foodies-uploads-2026 us-east-1
 ```
 *The smoke test validates:*
 1. `GET /health` returns 200 OK and `status: "ok"`.
@@ -410,7 +408,7 @@ If `nginx -t` passes with `syntax is ok` and `test is successful`, apply changes
 | **HTTP 403 Forbidden on static assets (`/index.html`, `/css/*`)** | `www-data` user lacks read permissions on `/opt/foodies` (missing `foodies` group membership or Nginx wasn't restarted). | 1. Add `www-data` to `foodies` group: `sudo usermod -a -G foodies www-data`.<br>2. **Restart Nginx** so active worker processes pick up the group: `sudo systemctl restart nginx`.<br>3. Verify ownership: `ls -ld /opt/foodies` (must be `foodies:foodies`, mode 750). |
 | **`pip install` killed or process terminates with `Killed` (OOM)** | Server ran out of memory on `t3.micro` (1GB RAM) during package compilation or wheel building. | 1. Check swap: `swapon --show` or `free -h`.<br>2. Create 2GB swap: `sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile`.<br>3. Re-run `sudo bash ~/foodies-repo/deploy/scripts/update-foodies.sh ~/foodies-repo`. |
 | **Certbot fails ACME challenge: `Invalid response ... 404`** | Port 80 is blocked in EC2 Security Group, DuckDNS IP doesn't match Elastic IP, or ACME webroot directory is missing. | 1. Verify DNS: `dig +short my-foodies.duckdns.org` matches your Elastic IP.<br>2. Verify Inbound Rule: AWS Security Group allows port 80 from `0.0.0.0/0`.<br>3. Verify directory: `ls -ld /var/www/certbot` (must exist and be mode 755).<br>4. Test locally: `curl -I http://127.0.0.1/.well-known/acme-challenge/test`. |
-| **S3 Upload / Ready Probe returns 503 or 403 AccessDenied** | EC2 instance lacks `FoodiesEC2Role` IAM role, bucket name mismatch, or bucket policy denies access. | 1. In EC2 Console, ensure `FoodiesEC2Role` is attached as IAM instance profile.<br>2. Verify `/etc/foodies/foodies.env` has exact `S3_BUCKET` name.<br>3. Check IAM policy: ensures `s3:PutObject` on `arn:aws:s3:::YOUR_BUCKET_NAME/uploads/*` and `s3:ListBucket` with prefix condition.<br>4. Check `/ready` probe: `curl -s http://127.0.0.1:8080/ready`. |
+| **S3 Upload / Ready Probe returns 503 or 403 AccessDenied** | EC2 instance lacks `FoodiesEC2Role` IAM role, bucket name mismatch, or bucket policy denies access. | 1. In EC2 Console, ensure `FoodiesEC2Role` is attached as IAM instance profile.<br>2. Verify `/etc/foodies/foodies.env` has exact `S3_BUCKET` name (`foodies-uploads-2026`).<br>3. Check IAM policy: ensures `s3:PutObject` on `arn:aws:s3:::foodies-uploads-2026/uploads/*` and `s3:ListBucket` with prefix condition.<br>4. Check `/ready` probe: `curl -s http://127.0.0.1:8080/ready`. |
 | **Database `sqlite3.OperationalError: unable to open database file`** | `/var/lib/foodies` directory does not exist or has incorrect ownership. | 1. Verify directory: `sudo mkdir -p /var/lib/foodies`.<br>2. Set ownership: `sudo chown -R foodies:foodies /var/lib/foodies && sudo chmod 750 /var/lib/foodies`.<br>3. Run migration: `sudo -u foodies /opt/foodies/venv/bin/python /opt/foodies/manage.py migrate`. |
 | **HTTP 403 CSRF Token Missing or Invalid on login/register** | Client POSTed state-changing request without `X-CSRFToken` header or valid session cookie. | 1. Ensure client fetches `/api/auth/csrf-token` before POSTing.<br>2. If using browser forms, ensure CSRF token cookie is included in request headers. |
 | **CloudWatch Agent fails to start or publish metrics** | Missing IAM policy permissions (`cloudwatch:PutMetricData`, `logs:PutLogEvents`) or config syntax error. | 1. Check agent logs: `sudo tail -n 50 /opt/aws/amazon-cloudwatch-agent/logs/amazon-cloudwatch-agent.log`.<br>2. Verify IAM policy includes CloudWatch and logs permissions.<br>3. Test config syntax: `python3 -m json.tool /opt/foodies/deploy/cloudwatch-agent-config.json`. |

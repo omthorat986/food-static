@@ -7,8 +7,8 @@
       "Principal": "*",
       "Action": "s3:*",
       "Resource": [
-        "arn:aws:s3:::YOUR_BUCKET_NAME",
-        "arn:aws:s3:::YOUR_BUCKET_NAME/*"
+        "arn:aws:s3:::foodies-uploads-2026",
+        "arn:aws:s3:::foodies-uploads-2026/*"
       ],
       "Condition": {
         "Bool": {
@@ -21,7 +21,7 @@
       "Effect": "Deny",
       "Principal": "*",
       "Action": "s3:PutObject",
-      "Resource": "arn:aws:s3:::YOUR_BUCKET_NAME/*",
+      "Resource": "arn:aws:s3:::foodies-uploads-2026/*",
       "Condition": {
         "StringNotEquals": {
           "s3:x-amz-server-side-encryption": "AES256"

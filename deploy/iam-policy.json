@@ -9,7 +9,7 @@
         "s3:GetObject",
         "s3:DeleteObject"
       ],
-      "Resource": "arn:aws:s3:::YOUR_BUCKET_NAME/uploads/*"
+      "Resource": "arn:aws:s3:::foodies-uploads-2026/uploads/*"
     },
     {
       "Sid": "AllowS3BucketListWithUploadsPrefix",
@@ -17,7 +17,7 @@
       "Action": [
         "s3:ListBucket"
       ],
-      "Resource": "arn:aws:s3:::YOUR_BUCKET_NAME",
+      "Resource": "arn:aws:s3:::foodies-uploads-2026",
       "Condition": {
         "StringLike": {
           "s3:prefix": [
