@@ -878,18 +878,72 @@ def admin_delete_submission(sub_id):
     return jsonify({"success": True, "message": "Submission and associated file deleted from cloud storage."}), 200
 
 # -----------------------------------------------------------------------------
-# Static Frontend Serving (Unchanged existing files)
+# Static Frontend Serving (Strict Allowlist Only)
 # -----------------------------------------------------------------------------
+ALLOWED_ROOT_PAGES = {
+    "index.html",
+    "login.html",
+    "register.html",
+    "reviews.html",
+    "snaps.html",
+    "orders.html",
+}
+
+ALLOWED_STATIC_DIRS = {
+    "css": {".css"},
+    "js": {".js"},
+    "images": {".jpg", ".jpeg", ".png", ".webp", ".avif", ".svg", ".ico", ".gif"},
+    "cuisine": {".html"},
+    "food": {".html"},
+    "cart": {".html"},
+    "paypal": {".html"},
+}
+
 @app.route("/")
 def serve_index():
     return send_from_directory(BASE_DIR, "index.html")
 
 @app.route("/<path:filename>")
 def serve_static(filename):
-    """Serves existing static files unchanged."""
-    target_path = os.path.join(BASE_DIR, filename)
-    if os.path.isfile(target_path):
-        return send_from_directory(BASE_DIR, filename)
+    """
+    Serves only strictly allowlisted static assets.
+    Explicitly rejects source code, config files, logs, databases, and dotfiles with 404.
+    """
+    # Reject dotfiles, path traversal tokens, and control characters
+    if (
+        ".." in filename
+        or filename.startswith(".")
+        or "/." in filename
+        or "\\" in filename
+        or "\x00" in filename
+    ):
+        abort(404)
+
+    parts = filename.strip("/").split("/")
+
+    # 1. Root-level allowlisted HTML files
+    if len(parts) == 1 and parts[0] in ALLOWED_ROOT_PAGES:
+        target = os.path.join(BASE_DIR, parts[0])
+        if os.path.isfile(target):
+            return send_from_directory(BASE_DIR, parts[0])
+        abort(404)
+
+    # 2. Subdirectory allowlisted assets
+    top_dir = parts[0]
+    if top_dir in ALLOWED_STATIC_DIRS:
+        allowed_exts = ALLOWED_STATIC_DIRS[top_dir]
+        ext = os.path.splitext(filename)[1].lower()
+        if ext in allowed_exts:
+            safe_subpath = os.path.normpath(filename)
+            full_path = os.path.join(BASE_DIR, safe_subpath)
+            try:
+                common_prefix = os.path.commonpath([BASE_DIR, full_path])
+            except ValueError:
+                abort(404)
+            if common_prefix == BASE_DIR and os.path.isfile(full_path):
+                return send_from_directory(BASE_DIR, safe_subpath)
+
+    # Everything else returns 404 Not Found
     abort(404)
 
 # -----------------------------------------------------------------------------
