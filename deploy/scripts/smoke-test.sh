@@ -17,8 +17,6 @@ S3_BUCKET="${2:-${S3_BUCKET:-}}"
 AWS_REGION="${3:-${AWS_REGION:-us-east-1}}"
 
 SCHEME="https"
-HTTP_PORT="80"
-HTTPS_PORT="443"
 
 if [ "$TARGET_DOMAIN" = "localhost" ] || [ "$TARGET_DOMAIN" = "127.0.0.1" ]; then
     SCHEME="http"

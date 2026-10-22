@@ -27,7 +27,7 @@ flowchart TD
             end
 
             subgraph AppServer ["Application Layer (systemd managed)"]
-                Gunicorn["Gunicorn WSGI (3 Workers, 2 Threads)"]
+                Gunicorn["Gunicorn WSGI (2 Workers, 2 Threads)"]
                 FlaskBackend["Flask Application (app.py)<br/>• RBAC (User / Moderator / Admin)<br/>• Passwords via Bcrypt<br/>• Audit Logging<br/>• S3 Client (Boto3)"]
                 SQLiteDB[("SQLite Database<br/>foodies.db<br/>(Users, Reviews, Recipes)")]
                 LocalLog["Rotating Log File<br/>logs/app.log"]

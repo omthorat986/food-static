@@ -30,7 +30,7 @@ ExecStartPre=+/bin/chmod 750 /var/log/foodies /var/lib/foodies
 ExecStartPre=/opt/foodies/venv/bin/python manage.py migrate
 
 ExecStart=/opt/foodies/venv/bin/gunicorn \
-    --workers 3 \
+    --workers 2 \
     --threads 2 \
     --bind 127.0.0.1:8080 \
     --timeout 120 \

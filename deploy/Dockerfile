@@ -35,4 +35,4 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD python3 -c "import urllib.request; sys_exit = 0 if urllib.request.urlopen('http://127.0.0.1:8080/health').getcode() == 200 else 1; exit(sys_exit)"
 
-CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "3", "--threads", "2", "--timeout", "120", "--access-logfile", "/var/log/foodies/access.log", "--error-logfile", "/var/log/foodies/error.log", "app:app"]
+CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "2", "--threads", "2", "--timeout", "120", "--access-logfile", "/var/log/foodies/access.log", "--error-logfile", "/var/log/foodies/error.log", "app:app"]

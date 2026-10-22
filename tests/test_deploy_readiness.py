@@ -208,6 +208,11 @@ class TestDeploymentReadiness(unittest.TestCase):
         self.assertIn("ReadWritePaths=/var/lib/foodies /var/log/foodies -/tmp", content)
         self.assertIn("WorkingDirectory=/opt/foodies", content)
         self.assertIn("ExecStartPre=/opt/foodies/venv/bin/python manage.py migrate", content)
+        self.assertIn("--workers 2", content)
+
+        # Also verify update-foodies.sh exists
+        update_script = os.path.join(os.path.dirname(__file__), "..", "deploy", "scripts", "update-foodies.sh")
+        self.assertTrue(os.path.isfile(update_script))
 
     # -------------------------------------------------------------------------
     # Item 8: Session Cookie Security

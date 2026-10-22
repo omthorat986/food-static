@@ -18,7 +18,7 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 # 1. Install prerequisite system packages
-echo "[1/6] Installing required OS packages..."
+echo "[1/7] Installing required OS packages..."
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
 apt-get install -y --no-install-recommends \
@@ -26,13 +26,30 @@ apt-get install -y --no-install-recommends \
     python3-venv \
     nginx \
     git \
+    rsync \
     certbot \
     curl \
     ca-certificates \
     sqlite3
 
-# 2. Create the dedicated 'foodies' service account and group
-echo "[2/6] Configuring service account and groups..."
+# 2. Configure Swap (2GB) for t3.micro to prevent OOM errors during pip install & gunicorn
+echo "[2/7] Checking and configuring swap space..."
+if [ ! -f /swapfile ] && [ "$(swapon --show | wc -l)" -le 1 ]; then
+    echo "Creating 2GB swapfile at /swapfile..."
+    fallocate -l 2G /swapfile || dd if=/dev/zero of=/swapfile bs=1M count=2048
+    chmod 600 /swapfile
+    mkswap /swapfile
+    swapon /swapfile
+    if ! grep -q '/swapfile' /etc/fstab; then
+        echo '/swapfile none swap sw 0 0' >> /etc/fstab
+    fi
+    echo "2GB swapfile activated successfully."
+else
+    echo "Swap is already configured."
+fi
+
+# 3. Create the dedicated 'foodies' service account and group
+echo "[3/7] Configuring service account and groups..."
 if ! getent group foodies >/dev/null 2>&1; then
     groupadd --system foodies
     echo "Created system group: foodies"
@@ -43,8 +60,8 @@ if ! id -u foodies >/dev/null 2>&1; then
     echo "Created system user: foodies"
 fi
 
-# 3. Create production directories with strict mode 750
-echo "[3/6] Setting up production directory tree..."
+# 4. Create production directories with strict mode 750
+echo "[4/7] Setting up production directory tree..."
 # Application root (/opt/foodies, mode 750)
 mkdir -p /opt/foodies
 chown -R foodies:foodies /opt/foodies
@@ -70,15 +87,18 @@ mkdir -p /var/www/certbot
 chmod 755 /var/www/certbot
 chown -R www-data:www-data /var/www/certbot
 
-# 4. Configure group permissions for www-data (Nginx)
-echo "[4/6] Adding www-data to foodies group..."
+# 5. Configure group permissions for www-data (Nginx) and restart Nginx
+echo "[5/7] Adding www-data to foodies group and restarting Nginx..."
 if id -u www-data >/dev/null 2>&1; then
     usermod -a -G foodies www-data
     echo "Added www-data to group: foodies"
+    # Restart Nginx so running worker processes pick up the new supplementary group
+    systemctl restart nginx || true
+    echo "Nginx restarted with updated group permissions."
 fi
 
-# 5. Configure CloudWatch Agent user (cwagent)
-echo "[5/6] Configuring CloudWatch agent user permissions..."
+# 6. Configure CloudWatch Agent user (cwagent)
+echo "[6/7] Configuring CloudWatch agent user permissions..."
 if ! getent group cwagent >/dev/null 2>&1; then
     groupadd --system cwagent || true
 fi
@@ -92,8 +112,14 @@ usermod -a -G foodies cwagent || true
 usermod -a -G adm cwagent || true
 echo "Added cwagent to groups: foodies, adm"
 
-# 6. Initialize Python virtual environment in /opt/foodies/venv
-echo "[6/6] Initializing Python virtual environment in /opt/foodies/venv..."
+# Restart amazon-cloudwatch-agent if it exists so its daemon inherits new groups
+if systemctl list-unit-files amazon-cloudwatch-agent.service >/dev/null 2>&1 || [ -f /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl ]; then
+    systemctl restart amazon-cloudwatch-agent || true
+    echo "Restarted amazon-cloudwatch-agent with updated group permissions."
+fi
+
+# 7. Initialize Python virtual environment in /opt/foodies/venv
+echo "[7/7] Initializing Python virtual environment in /opt/foodies/venv..."
 if [ ! -d "/opt/foodies/venv" ]; then
     python3 -m venv /opt/foodies/venv
     chown -R foodies:foodies /opt/foodies/venv
@@ -102,9 +128,9 @@ fi
 
 echo "===================================================================="
 echo " Bootstrap Complete! Next steps:"
-echo " 1. Clone repository into /opt/foodies with your read-only deploy key."
+echo " 1. Clone repository into ~/foodies-repo (git clone <repo_url> ~/foodies-repo)."
 echo " 2. Copy .env.example to /etc/foodies/foodies.env and set chmod 640."
-echo " 3. Run: /opt/foodies/venv/bin/pip install -r /opt/foodies/requirements.txt"
-echo " 4. Run: sudo -u foodies /opt/foodies/venv/bin/python /opt/foodies/manage.py migrate"
-echo " 5. Run: sudo -u foodies /opt/foodies/venv/bin/python /opt/foodies/manage.py create-admin"
+echo " 3. Deploy code with: sudo bash ~/foodies-repo/deploy/scripts/update-foodies.sh ~/foodies-repo"
+echo " 4. Run: sudo -u foodies /opt/foodies/venv/bin/python /opt/foodies/manage.py create-admin"
+echo " 5. Follow deploy/DEPLOY.md to configure Nginx and SSL."
 echo "===================================================================="

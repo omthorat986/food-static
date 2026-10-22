@@ -38,6 +38,10 @@ This runbook provides complete, step-by-step instructions for deploying the **Fo
    - Replace `YOUR_BUCKET_NAME` with your actual bucket name.
    - Click **Save changes**.
 
+> [!NOTE]
+> **Manual AWS Console Uploads Must Use SSE-S3:**
+> The bucket policy strictly enforces `s3:x-amz-server-side-encryption: AES256`. If uploading test images or objects via the AWS S3 Console, under **Properties** -> **Server-side encryption settings**, you must explicitly select **"Specify an encryption key"** and choose **"Server-side encryption with Amazon S3 managed keys (SSE-S3)"**. Otherwise, the console upload will be rejected with HTTP 403 Access Denied. (The Foodies application code automatically attaches this SSE-S3 encryption header to all programmatic uploads).
+
 ---
 
 ### Step 2: Create the IAM Role for EC2
@@ -52,7 +56,7 @@ This runbook provides complete, step-by-step instructions for deploying the **Fo
    - **Trusted entity type**: AWS service.
    - **Use case**: EC2. Click **Next**.
    - **Permissions policies**: Search and attach `FoodiesEC2S3CloudWatchPolicy`.
-   - *(Optional but recommended)* Also search and attach the AWS managed policy `CloudWatchAgentServerPolicy`.
+   - Also search and attach the AWS managed policy: **`CloudWatchAgentServerPolicy`** (grants standard CloudWatch agent permissions for metrics and logs).
    - Name the role: `FoodiesEC2Role`.
    - Click **Create role**.
 
@@ -115,59 +119,69 @@ This runbook provides complete, step-by-step instructions for deploying the **Fo
 
 ---
 
-### Step 7: Bootstrap the Ubuntu 24.04 Host
+### Step 7: Clone Application Code into ~/foodies-repo with Read-Only Deploy Key
 1. Connect to the EC2 instance via SSH:
    ```bash
    chmod 400 your-key.pem
    ssh -i your-key.pem ubuntu@<ELASTIC_IP>
    ```
 
-2. Download and run the automated bootstrap script:
-   ```bash
-   # Download or copy bootstrap.sh
-   sudo bash /opt/foodies/deploy/scripts/bootstrap.sh || curl -sSL https://raw.githubusercontent.com/omthorat986/food-static/main/deploy/scripts/bootstrap.sh | sudo bash
-   ```
-   *What this script does:*
-   - Creates system group and user `foodies:foodies`.
-   - Creates `/opt/foodies` (mode 750, `foodies:foodies`).
-   - Creates `/var/lib/foodies` (mode 750, `foodies:foodies`).
-   - Creates `/var/log/foodies` (mode 750, `foodies:foodies`).
-   - Creates `/etc/foodies` (mode 750, `root:foodies`).
-   - Creates ACME webroot directory `/var/www/certbot` (mode 755, `www-data:www-data`).
-   - Adds `www-data` to the `foodies` group.
-   - Adds CloudWatch agent user (`cwagent`) to the `foodies` and `adm` groups.
-   - Initializes Python virtual environment at `/opt/foodies/venv`.
-
----
-
-### Step 8: Clone Application Code with Read-Only Deploy Key
-1. Generate a dedicated read-only SSH deploy key on the server:
+2. Generate a dedicated read-only SSH deploy key on the server:
    ```bash
    ssh-keygen -t ed25519 -C "foodies-deploy-key" -f ~/.ssh/id_ed25519_deploy -N ""
    cat ~/.ssh/id_ed25519_deploy.pub
    ```
-2. Go to your GitHub repository -> **Settings** -> **Deploy keys** -> **Add deploy key**:
+3. Go to your GitHub repository -> **Settings** -> **Deploy keys** -> **Add deploy key**:
    - Title: `EC2-Production-ReadOnly`.
    - Paste the public key. Leave **"Allow write access" UNCHECKED**. Click **Add key**.
 
-3. Clone the repository into `/opt/foodies`:
+4. Clone the repository into `~/foodies-repo`:
    ```bash
-   sudo GIT_SSH_COMMAND="ssh -i $HOME/.ssh/id_ed25519_deploy -o IdentitiesOnly=yes" \
-       git clone git@github.com:omthorat986/food-static.git /opt/foodies
-
-   # Set ownership and permissions
-   sudo chown -R foodies:foodies /opt/foodies
-   sudo chmod 750 /opt/foodies
+   GIT_SSH_COMMAND="ssh -i $HOME/.ssh/id_ed25519_deploy -o IdentitiesOnly=yes" \
+       git clone git@github.com:YOUR_GITHUB_USER/YOUR_REPO.git ~/foodies-repo
    ```
-
-4. Install pinned Python dependencies:
-   ```bash
-   sudo /opt/foodies/venv/bin/pip install --no-cache-dir -r /opt/foodies/requirements.txt
-   ```
+   *(Cloning into `~/foodies-repo` keeps your git repository intact and avoids collision with `/opt/foodies`, which holds production runtime files and the dedicated virtual environment).*
 
 ---
 
-### Step 9: Configure Production Environment Secrets
+### Step 8: Bootstrap the Ubuntu 24.04 Host
+Run the automated bootstrap script directly from your cloned repository:
+```bash
+sudo bash ~/foodies-repo/deploy/scripts/bootstrap.sh
+```
+
+> [!NOTE]
+> **Server Runtime (Python 3.12):**
+> Ubuntu 24.04 LTS comes standard with Python 3.12 (`python3 --version` returns Python 3.12.x). The virtual environment initialized at `/opt/foodies/venv` uses this system Python 3.12 installation, and all pinned dependencies in `requirements.txt` are tested and verified for Python 3.12 compatibility.
+
+*What this script does:*
+- **Swap Space**: Configures a 2GB swap file (`/swapfile`) to prevent Out-Of-Memory (OOM) errors during `pip install` and Gunicorn operation on `t3.micro` (1GB RAM).
+- **Packages**: Installs `nginx`, `git`, `rsync`, `certbot`, `python3-venv`, `python3-pip`, `sqlite3`, `curl`.
+- **System Accounts**: Creates system user and group `foodies:foodies`.
+- **Production Directories**: Creates `/opt/foodies`, `/var/lib/foodies`, `/var/log/foodies` (mode 750, `foodies:foodies`), `/etc/foodies` (mode 750, `root:foodies`), and ACME webroot `/var/www/certbot` (mode 755, `www-data:www-data`).
+- **Nginx & CloudWatch Permissions**: Adds `www-data` to the `foodies` group and **restarts Nginx** so active worker processes pick up supplementary group permissions. Adds `cwagent` to `foodies` and `adm` groups, restarting `amazon-cloudwatch-agent` if it exists.
+- **Virtual Environment**: Initializes an isolated virtual environment at `/opt/foodies/venv`.
+
+---
+
+### Step 9: Deploy Application Code with update-foodies.sh
+Run the dedicated deployment/sync script to deploy code into `/opt/foodies`:
+```bash
+sudo bash ~/foodies-repo/deploy/scripts/update-foodies.sh ~/foodies-repo
+```
+*What this script does:*
+1. Syncs application files from `~/foodies-repo` into `/opt/foodies` (preserving the existing `/opt/foodies/venv`).
+2. Enforces strict file ownership (`foodies:foodies`) and permissions (mode 750).
+3. Installs pinned dependencies via `/opt/foodies/venv/bin/pip install -r requirements.txt`.
+4. Runs schema migrations (`manage.py migrate`) idempotently.
+5. Safely reloads or restarts `foodies.service` if active.
+
+> [!TIP]
+> You will use this exact command (`sudo bash ~/foodies-repo/deploy/scripts/update-foodies.sh ~/foodies-repo`) every time you pull code updates in `~/foodies-repo`!
+
+---
+
+### Step 10: Configure Production Environment Secrets
 1. Copy the environment template to `/etc/foodies/foodies.env`:
    ```bash
    sudo cp /opt/foodies/.env.example /etc/foodies/foodies.env
@@ -194,21 +208,27 @@ This runbook provides complete, step-by-step instructions for deploying the **Fo
 
 ---
 
-### Step 10: Run Database Migration and Create Admin Account
-1. Apply database schema migrations idempotently:
-   ```bash
-   sudo -u foodies /opt/foodies/venv/bin/python /opt/foodies/manage.py migrate
-   ```
-
-2. Create the production administrator account (prompts with `getpass`, enforces 10+ characters):
+### Step 11: Create Admin Account & Run Test Suites in Server Virtualenv
+1. Create the production administrator account (prompts with `getpass`, enforces 10+ characters):
    ```bash
    sudo -u foodies /opt/foodies/venv/bin/python /opt/foodies/manage.py create-admin
    ```
    Enter the admin email and a strong password (at least 10 characters).
 
+2. **Verify application inside the server virtual environment**:
+   Run both automated test suites directly in `/opt/foodies/venv` to ensure all dependencies, security rules, and database routines function on the production host:
+   ```bash
+   # 1. Run manage.py automated self-tests
+   sudo -u foodies /opt/foodies/venv/bin/python /opt/foodies/manage.py test
+
+   # 2. Run unittest discovery
+   sudo -u foodies /opt/foodies/venv/bin/python -m unittest discover -s /opt/foodies/tests -v
+   ```
+   Both test suites must pass 100% before proceeding.
+
 ---
 
-### Step 11: Configure HTTP-Only Nginx (Starts Cleanly Before Certificates)
+### Step 12: Configure HTTP-Only Nginx (Starts Cleanly Before Certificates)
 1. Copy the initial HTTP-only Nginx configuration:
    ```bash
    sudo cp /opt/foodies/deploy/nginx.conf /etc/nginx/sites-available/foodies.conf
@@ -223,17 +243,25 @@ This runbook provides complete, step-by-step instructions for deploying the **Fo
    ```bash
    sudo ln -sf /etc/nginx/sites-available/foodies.conf /etc/nginx/sites-enabled/
    sudo rm -f /etc/nginx/sites-enabled/default
+   ```
+
+4. **Test Nginx configuration with `sudo nginx -t` before starting Nginx**:
+   ```bash
    sudo nginx -t
+   ```
+   *Verification:* `sudo nginx -t` must output `syntax is ok` and `test is successful`.
+
+5. Start / restart Nginx:
+   ```bash
    sudo systemctl restart nginx
    ```
-   *Verification:* Nginx starts cleanly on port 80 without SSL errors.
 
 ---
 
-### Step 12: Obtain TLS Certificate via Certbot Webroot
-Run Certbot in **webroot mode** targeting `/var/www/certbot`.
+### Step 13: Obtain TLS Certificate via Certbot Webroot
+Run Certbot in **webroot mode** targeting `/var/www/certbot`:
 > [!IMPORTANT]
-> Use `--webroot -w /var/www/certbot`, **NOT `--standalone`**! Webroot mode allows Let's Encrypt to verify domain ownership while Nginx remains active, enabling seamless automated renewals without downtime.
+> Use `--webroot -w /var/www/certbot`, **NOT `--standalone`**! Webroot mode allows Let's Encrypt to verify domain ownership while Nginx remains active on port 80, enabling seamless automated renewals without downtime.
 
 ```bash
 sudo certbot certonly \
@@ -245,14 +273,14 @@ sudo certbot certonly \
     -m your-email@example.com
 ```
 
-Test automated renewal:
+Test automated renewal (Nginx continues running):
 ```bash
 sudo certbot renew --dry-run
 ```
 
 ---
 
-### Step 13: Enable Full HTTPS Nginx Block & Start Systemd Service
+### Step 14: Enable Full HTTPS Nginx Block & Start Systemd Service
 1. Enable the production HTTPS Nginx configuration:
    ```bash
    sudo cp /opt/foodies/deploy/nginx-https.conf /etc/nginx/sites-available/foodies.conf
@@ -261,7 +289,7 @@ sudo certbot renew --dry-run
    sudo systemctl reload nginx
    ```
 
-2. Install and start the Gunicorn systemd service:
+2. Install and start the Gunicorn systemd service (configured with 2 workers for `t3.micro`):
    ```bash
    sudo cp /opt/foodies/deploy/foodies.service /etc/systemd/system/foodies.service
    sudo systemctl daemon-reload
@@ -271,7 +299,7 @@ sudo certbot renew --dry-run
 
 ---
 
-### Step 14: Install and Start AWS CloudWatch Agent
+### Step 15: Install and Start AWS CloudWatch Agent
 1. Download and install the official Amazon CloudWatch agent package:
    ```bash
    wget -q https://amazoncloudwatch-agent.s3.amazonaws.com/ubuntu/amd64/latest/amazon-cloudwatch-agent.deb
@@ -295,7 +323,7 @@ sudo certbot renew --dry-run
 
 ---
 
-### Step 15: Setup CloudWatch Alarms & SNS Alerting
+### Step 16: Setup CloudWatch Alarms & SNS Alerting
 1. Open the [AWS CloudWatch Console](https://console.aws.amazon.com/cloudwatch/) -> **Alarms** -> **Create alarm**.
 2. **Select metric**: `EC2` -> `Per-Instance Metrics` -> Select your instance's `CPUUtilization`.
 3. Set condition: **Static threshold**, Greater than `70%` for `5 minutes` (1 consecutive period).
@@ -315,7 +343,7 @@ sudo certbot renew --dry-run
 
 ---
 
-### Step 16: Execute Automated Post-Deployment Smoke Test
+### Step 17: Execute Automated Post-Deployment Smoke Test
 Run the automated verification script:
 ```bash
 sudo bash /opt/foodies/deploy/scripts/smoke-test.sh my-foodies.duckdns.org YOUR_BUCKET_NAME us-east-1
@@ -330,7 +358,7 @@ sudo bash /opt/foodies/deploy/scripts/smoke-test.sh my-foodies.duckdns.org YOUR_
 
 ---
 
-### Step 17: Setup Automated SQLite Backups
+### Step 18: Setup Automated SQLite Backups
 Set up a daily automated backup of the SQLite database using SQLite's online `.backup` command (locks safe):
 ```bash
 sudo mkdir -p /var/lib/foodies/backups
@@ -343,7 +371,7 @@ echo '0 3 * * * foodies sqlite3 /var/lib/foodies/foodies.db ".backup '\''/var/li
 
 ---
 
-### Step 18: Security Cleanup
+### Step 19: Security Cleanup
 1. Remove deploy key from the user directory if no longer needed:
    ```bash
    rm -f ~/.ssh/id_ed25519_deploy*
@@ -361,3 +389,28 @@ echo '0 3 * * * foodies sqlite3 /var/lib/foodies/foodies.db ".backup '\''/var/li
    ```bash
    history -c
    ```
+
+---
+
+## Step 20: Troubleshooting & Diagnostic Guide
+
+Always test Nginx configuration before restarting or reloading:
+```bash
+sudo nginx -t
+```
+If `nginx -t` passes with `syntax is ok` and `test is successful`, apply changes with `sudo systemctl reload nginx`. If it fails, read the error message line number and inspect that configuration file before restarting.
+
+### Troubleshooting Quick-Reference Table
+
+| Symptom / Error | Root Cause | Diagnostic & Resolution Steps |
+| :--- | :--- | :--- |
+| **`sudo nginx -t` fails with directive syntax error** | Typos, unclosed curly braces, or missing semicolons in `/etc/nginx/sites-available/foodies.conf`. | 1. Check exact error output for file and line number.<br>2. Run `sudo nginx -t` to locate the offending token.<br>3. Verify all directive lines end with `;`. |
+| **`sudo nginx -t` fails: cannot load certificate** | `deploy/nginx-https.conf` was applied BEFORE Certbot ran, so `/etc/letsencrypt/live/...` does not exist. | 1. Revert to HTTP-only config: `sudo cp /opt/foodies/deploy/nginx.conf /etc/nginx/sites-available/foodies.conf`.<br>2. Replace domain with `sed`.<br>3. Run `sudo nginx -t && sudo systemctl restart nginx`.<br>4. Run Certbot (Step 13), then apply HTTPS config (Step 14). |
+| **HTTP 502 Bad Gateway** | Gunicorn backend service is down or failing to bind to `127.0.0.1:8080`. | 1. Check service status: `sudo systemctl status foodies.service`.<br>2. Inspect recent logs: `sudo journalctl -u foodies.service -n 50 --no-pager`.<br>3. Check error log: `sudo cat /var/log/foodies/error.log`.<br>4. Verify `/etc/foodies/foodies.env` exists and contains valid `SECRET_KEY`. |
+| **HTTP 403 Forbidden on static assets (`/index.html`, `/css/*`)** | `www-data` user lacks read permissions on `/opt/foodies` (missing `foodies` group membership or Nginx wasn't restarted). | 1. Add `www-data` to `foodies` group: `sudo usermod -a -G foodies www-data`.<br>2. **Restart Nginx** so active worker processes pick up the group: `sudo systemctl restart nginx`.<br>3. Verify ownership: `ls -ld /opt/foodies` (must be `foodies:foodies`, mode 750). |
+| **`pip install` killed or process terminates with `Killed` (OOM)** | Server ran out of memory on `t3.micro` (1GB RAM) during package compilation or wheel building. | 1. Check swap: `swapon --show` or `free -h`.<br>2. Create 2GB swap: `sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile`.<br>3. Re-run `sudo bash ~/foodies-repo/deploy/scripts/update-foodies.sh ~/foodies-repo`. |
+| **Certbot fails ACME challenge: `Invalid response ... 404`** | Port 80 is blocked in EC2 Security Group, DuckDNS IP doesn't match Elastic IP, or ACME webroot directory is missing. | 1. Verify DNS: `dig +short my-foodies.duckdns.org` matches your Elastic IP.<br>2. Verify Inbound Rule: AWS Security Group allows port 80 from `0.0.0.0/0`.<br>3. Verify directory: `ls -ld /var/www/certbot` (must exist and be mode 755).<br>4. Test locally: `curl -I http://127.0.0.1/.well-known/acme-challenge/test`. |
+| **S3 Upload / Ready Probe returns 503 or 403 AccessDenied** | EC2 instance lacks `FoodiesEC2Role` IAM role, bucket name mismatch, or bucket policy denies access. | 1. In EC2 Console, ensure `FoodiesEC2Role` is attached as IAM instance profile.<br>2. Verify `/etc/foodies/foodies.env` has exact `S3_BUCKET` name.<br>3. Check IAM policy: ensures `s3:PutObject` on `arn:aws:s3:::YOUR_BUCKET_NAME/uploads/*` and `s3:ListBucket` with prefix condition.<br>4. Check `/ready` probe: `curl -s http://127.0.0.1:8080/ready`. |
+| **Database `sqlite3.OperationalError: unable to open database file`** | `/var/lib/foodies` directory does not exist or has incorrect ownership. | 1. Verify directory: `sudo mkdir -p /var/lib/foodies`.<br>2. Set ownership: `sudo chown -R foodies:foodies /var/lib/foodies && sudo chmod 750 /var/lib/foodies`.<br>3. Run migration: `sudo -u foodies /opt/foodies/venv/bin/python /opt/foodies/manage.py migrate`. |
+| **HTTP 403 CSRF Token Missing or Invalid on login/register** | Client POSTed state-changing request without `X-CSRFToken` header or valid session cookie. | 1. Ensure client fetches `/api/auth/csrf-token` before POSTing.<br>2. If using browser forms, ensure CSRF token cookie is included in request headers. |
+| **CloudWatch Agent fails to start or publish metrics** | Missing IAM policy permissions (`cloudwatch:PutMetricData`, `logs:PutLogEvents`) or config syntax error. | 1. Check agent logs: `sudo tail -n 50 /opt/aws/amazon-cloudwatch-agent/logs/amazon-cloudwatch-agent.log`.<br>2. Verify IAM policy includes CloudWatch and logs permissions.<br>3. Test config syntax: `python3 -m json.tool /opt/foodies/deploy/cloudwatch-agent-config.json`. |
