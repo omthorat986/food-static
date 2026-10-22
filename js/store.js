@@ -147,6 +147,37 @@
         for (i = 0; i < pills.length; i++) pills[i].textContent = "Cart (" + count + ")";
     }
 
+    /* ---------- CSRF Protection ---------- */
+
+    function getCsrfToken() {
+        var match = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
+        if (match && match[1]) return decodeURIComponent(match[1]);
+        var meta = document.querySelector('meta[name="csrf-token"]');
+        if (meta && meta.getAttribute("content")) return meta.getAttribute("content");
+        return window.__CSRF_TOKEN__ || "";
+    }
+
+    function ensureCsrfToken(cb) {
+        var existing = getCsrfToken();
+        if (existing) {
+            if (cb) cb(existing);
+            return;
+        }
+        fetch("/api/auth/csrf-token")
+            .then(function (res) { return res.json(); })
+            .then(function (data) {
+                if (data && data.csrf_token) {
+                    window.__CSRF_TOKEN__ = data.csrf_token;
+                    var meta = document.querySelector('meta[name="csrf-token"]');
+                    if (meta) meta.setAttribute("content", data.csrf_token);
+                }
+                if (cb) cb(data && data.csrf_token ? data.csrf_token : "");
+            })
+            .catch(function () {
+                if (cb) cb("");
+            });
+    }
+
     /* ---------- Cloud & Session Management ---------- */
 
     function getSession() {
@@ -166,9 +197,16 @@
 
     function clearSession() {
         try { window.localStorage.removeItem(SESSION_KEY); } catch (e) { write(SESSION_KEY, null); }
-        // Clear server session
+        // Clear server session with CSRF protection header
         try {
-            fetch("/api/auth/logout", { method: "POST" }).catch(function () {});
+            ensureCsrfToken(function (token) {
+                fetch("/api/auth/logout", {
+                    method: "POST",
+                    headers: {
+                        "X-CSRF-Token": token || getCsrfToken()
+                    }
+                }).catch(function () {});
+            });
         } catch (e) {}
         renderAuth();
     }
@@ -353,6 +391,7 @@
     document.addEventListener("submit", handleAddFormSubmit);
 
     document.addEventListener("DOMContentLoaded", function () {
+        ensureCsrfToken();
         updateBadges();
         renderAuth();
         syncAuthWithServer();
@@ -368,7 +407,12 @@
         }
     });
 
+    window.getCsrfToken = getCsrfToken;
+    window.ensureCsrfToken = ensureCsrfToken;
+
     window.Foodies = {
+        getCsrfToken: getCsrfToken,
+        ensureCsrfToken: ensureCsrfToken,
         getCart: getCart,
         addToCart: addToCart,
         setQty: setQty,

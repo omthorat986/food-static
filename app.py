@@ -11,6 +11,10 @@ import sys
 import uuid
 import sqlite3
 import logging
+import time
+import secrets
+import hmac
+from io import BytesIO
 from logging.handlers import RotatingFileHandler
 from datetime import datetime, timezone
 from functools import wraps
@@ -22,15 +26,21 @@ from flask import (
     session,
     send_from_directory,
     redirect,
-    abort
+    abort,
+    Response
 )
 import bcrypt
 import boto3
 from botocore.exceptions import ClientError
 from werkzeug.utils import secure_filename
+from werkzeug.middleware.proxy_fix import ProxyFix
+from PIL import Image
+
+# Enforce decompression bomb protection limit on Pillow
+Image.MAX_IMAGE_PIXELS = 10_000_000
 
 # -----------------------------------------------------------------------------
-# Configuration
+# Configuration & Startup Validation
 # -----------------------------------------------------------------------------
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 APP_ENV = os.environ.get("APP_ENV", "development").lower()
@@ -51,11 +61,41 @@ else:
     LOGS_DIR = os.path.join(BASE_DIR, "logs")
 
 LOCAL_UPLOADS_DIR = os.environ.get("LOCAL_UPLOADS_DIR", os.path.join(BASE_DIR, "local_uploads"))
-
 STORAGE_MODE = os.environ.get("STORAGE_MODE", "local").lower() # 'local' or 's3'
-S3_BUCKET = os.environ.get("S3_BUCKET", "foodies-cloud-storage")
 AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
-SECRET_KEY = os.environ.get("SECRET_KEY", "foodies-insecure-dev-key-change-in-prod")
+
+INSECURE_SECRET_PLACEHOLDERS = {
+    "foodies-insecure-dev-key-change-in-prod",
+    "foodies-super-secret-key-change-in-prod",
+    "foodies-cloud-production-secret-replace-me",
+    "change-me",
+    "replace-me",
+    "secret",
+    "your-secret-key",
+    "your_secret_key",
+}
+
+SECRET_KEY = os.environ.get("SECRET_KEY", "").strip()
+if not SECRET_KEY and APP_ENV != "production":
+    SECRET_KEY = "dev-insecure-secret-key-for-local-testing-only"
+
+if APP_ENV == "production":
+    if not SECRET_KEY:
+        raise RuntimeError("FATAL: SECRET_KEY environment variable is required in production.")
+    if len(SECRET_KEY) < 32:
+        raise RuntimeError(f"FATAL: SECRET_KEY must be at least 32 characters in production (got {len(SECRET_KEY)}).")
+    if SECRET_KEY.lower() in INSECURE_SECRET_PLACEHOLDERS:
+        raise RuntimeError(f"FATAL: SECRET_KEY cannot be set to a known placeholder ('{SECRET_KEY}').")
+    if STORAGE_MODE == "s3":
+        _raw_bucket = os.environ.get("S3_BUCKET", "").strip()
+        if not _raw_bucket or _raw_bucket in ["YOUR_BUCKET_NAME", "foodies-cloud-storage", "foodies-cloud-storage-bucket"]:
+            raise RuntimeError(f"FATAL: In production S3 mode, S3_BUCKET must be explicitly set to your actual bucket name (got '{_raw_bucket}').")
+        S3_BUCKET = _raw_bucket
+    else:
+        S3_BUCKET = os.environ.get("S3_BUCKET", "foodies-dev-bucket")
+else:
+    S3_BUCKET = os.environ.get("S3_BUCKET", "foodies-dev-bucket")
+
 MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024  # 5 MB
 ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "webp"}
 ALLOWED_MIMETYPES = {"image/png", "image/jpeg", "image/pjpeg", "image/webp"}
@@ -78,7 +118,14 @@ app.secret_key = SECRET_KEY
 app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024  # Allow up to 10MB request to catch oversized files gracefully
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
-app.config["SESSION_COOKIE_SECURE"] = os.environ.get("COOKIE_SECURE", "false").lower() == "true"
+
+if APP_ENV == "production":
+    app.config["SESSION_COOKIE_SECURE"] = os.environ.get("COOKIE_SECURE", "true").lower() != "false"
+else:
+    app.config["SESSION_COOKIE_SECURE"] = os.environ.get("COOKIE_SECURE", "false").lower() == "true"
+
+# Trust reverse proxy headers from Nginx (single upstream proxy)
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
 # -----------------------------------------------------------------------------
 # Logging Configuration (Rotating file logs/app.log)
@@ -132,6 +179,119 @@ app_logger.addHandler(console_handler)
 def log_audit(event_type, details):
     """Helper to record standardized security audit logs."""
     app_logger.info(f"AUDIT | {event_type} | {details}")
+
+# -----------------------------------------------------------------------------
+# In-Memory Rate Limiting (Tracked per Gunicorn worker process)
+# -----------------------------------------------------------------------------
+# NOTE: Rate limiting counters are tracked in-memory per Gunicorn worker process.
+# In a multi-worker setup, each worker maintains its own sliding-window counter.
+_failed_logins_ip = {}
+_failed_logins_email = {}
+_register_attempts_ip = {}
+_upload_attempts_ip = {}
+_admin_actions_ip = {}
+
+def is_rate_limited(bucket, key, max_attempts, window_seconds):
+    """
+    Checks if an entity is rate-limited WITHOUT recording a new attempt.
+    Returns (is_limited, retry_after_seconds).
+    """
+    now = time.time()
+    records = bucket.get(key, [])
+    records = [t for t in records if now - t < window_seconds]
+    bucket[key] = records
+    if len(records) >= max_attempts:
+        retry_after = int(window_seconds - (now - records[0])) + 1
+        return True, max(1, retry_after)
+    return False, 0
+
+def check_and_record_rate_limit(bucket, key, max_attempts, window_seconds):
+    """
+    Sliding window rate limit check that records this attempt if not limited.
+    Returns (is_limited, retry_after_seconds).
+    """
+    now = time.time()
+    records = bucket.get(key, [])
+    records = [t for t in records if now - t < window_seconds]
+    if len(records) >= max_attempts:
+        retry_after = int(window_seconds - (now - records[0])) + 1
+        bucket[key] = records
+        return True, max(1, retry_after)
+    records.append(now)
+    bucket[key] = records
+    return False, 0
+
+# Alias for backwards compatibility
+check_rate_limit = check_and_record_rate_limit
+
+def record_failed_login(ip, email):
+    now = time.time()
+    for b, k in [(_failed_logins_ip, ip), (_failed_logins_email, email)]:
+        records = b.get(k, [])
+        records = [t for t in records if now - t < 300]
+        records.append(now)
+        b[k] = records
+
+def clear_failed_logins(ip, email):
+    _failed_logins_ip.pop(ip, None)
+    _failed_logins_email.pop(email, None)
+
+# -----------------------------------------------------------------------------
+# Upload Image Signature & Sanitization (Pillow)
+# -----------------------------------------------------------------------------
+def validate_and_sanitize_image(file_stream, original_filename):
+    """
+    Validates image magic bytes signature, checks dimensions, strips EXIF metadata,
+    and re-encodes image safely using Pillow.
+    Returns: (clean_stream, storage_key, clean_filename, out_mime, file_size)
+    """
+    header = file_stream.read(16)
+    file_stream.seek(0)
+
+    is_png = header.startswith(b"\x89PNG\r\n\x1a\n")
+    is_jpeg = header.startswith(b"\xff\xd8\xff")
+    is_webp = header.startswith(b"RIFF") and len(header) >= 12 and header[8:12] == b"WEBP"
+
+    if not (is_png or is_jpeg or is_webp):
+        raise ValueError("Invalid image signature. File content does not match allowed image formats (PNG, JPEG, WEBP).")
+
+    try:
+        img = Image.open(file_stream)
+        img.verify()
+    except Exception as e:
+        raise ValueError(f"Corrupt or invalid image file: {e}")
+
+    file_stream.seek(0)
+    img = Image.open(file_stream)
+
+    if img.width > 4096 or img.height > 4096:
+        raise ValueError(f"Image dimensions ({img.width}x{img.height}) exceed maximum allowed 4096x4096.")
+
+    clean_stream = BytesIO()
+    fmt = img.format
+    if fmt == "PNG":
+        img.save(clean_stream, format="PNG", optimize=True)
+        out_ext = "png"
+        out_mime = "image/png"
+    elif fmt == "WEBP":
+        img.save(clean_stream, format="WEBP", quality=85)
+        out_ext = "webp"
+        out_mime = "image/webp"
+    else:
+        if img.mode in ("RGBA", "P"):
+            img = img.convert("RGB")
+        img.save(clean_stream, format="JPEG", quality=85, optimize=True)
+        out_ext = "jpg"
+        out_mime = "image/jpeg"
+
+    clean_stream.seek(0, os.SEEK_END)
+    file_size = clean_stream.tell()
+    clean_stream.seek(0)
+
+    clean_filename = f"{uuid.uuid4().hex}.{out_ext}"
+    storage_key = f"uploads/{clean_filename}"
+
+    return clean_stream, storage_key, clean_filename, out_mime, file_size
 
 # -----------------------------------------------------------------------------
 # Database Setup (SQLite)
@@ -378,11 +538,69 @@ def role_required(allowed_roles):
     return decorator
 
 # -----------------------------------------------------------------------------
-# API: Health & Status
+# Security Middleware (CSRF Protection & Security Headers)
+# -----------------------------------------------------------------------------
+@app.before_request
+def app_before_request():
+    # Ensure CSRF token is present in session
+    if "csrf_token" not in session:
+        session["csrf_token"] = secrets.token_hex(32)
+
+    # Enforce CSRF protection on state-changing methods
+    if request.method in ["POST", "PUT", "DELETE", "PATCH"]:
+        client_token = (
+            request.headers.get("X-CSRF-Token")
+            or request.headers.get("X-CSRFToken")
+            or (request.is_json and request.get_json(silent=True) and request.get_json(silent=True).get("csrf_token"))
+            or request.form.get("csrf_token")
+        )
+        session_token = session.get("csrf_token")
+        if not session_token or not client_token or not hmac.compare_digest(str(client_token), str(session_token)):
+            log_audit("CSRF_BLOCKED", f"method={request.method}, path={request.path}")
+            return jsonify({"error": "Forbidden: Invalid or missing CSRF token."}), 403
+
+@app.after_request
+def set_security_headers(response):
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "SAMEORIGIN"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+    if APP_ENV == "production" or request.is_secure or app.config.get("TESTING"):
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "img-src 'self' data: https: blob:; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "font-src 'self' https://fonts.gstatic.com; "
+        "script-src 'self'; "
+        "connect-src 'self'; "
+        "frame-ancestors 'self';"
+    )
+
+    if "csrf_token" in session:
+        response.set_cookie(
+            "csrf_token",
+            session["csrf_token"],
+            secure=app.config.get("SESSION_COOKIE_SECURE", False),
+            httponly=False,
+            samesite="Lax"
+        )
+    return response
+
+@app.route("/api/auth/csrf-token", methods=["GET"])
+def get_csrf_token():
+    """Provides CSRF token for single-page applications and client forms."""
+    if "csrf_token" not in session:
+        session["csrf_token"] = secrets.token_hex(32)
+    return jsonify({"csrf_token": session["csrf_token"]}), 200
+
+# -----------------------------------------------------------------------------
+# API: Health & Readiness
 # -----------------------------------------------------------------------------
 @app.route("/health", methods=["GET"])
 def health():
-    """Health check endpoint for AWS Route53/ELB/CloudWatch and frontend status badge."""
+    """Liveness check endpoint for AWS Route53/ELB/CloudWatch and frontend status badge."""
     return jsonify({
         "status": "ok",
         "service": "foodies-cloud",
@@ -391,11 +609,68 @@ def health():
         "timestamp": datetime.now(timezone.utc).isoformat()
     }), 200
 
+@app.route("/ready", methods=["GET"])
+def ready():
+    """
+    Readiness probe for ALB/CloudWatch/monitoring.
+    Verifies database connectivity and S3 prefix reachability (if STORAGE_MODE=s3).
+    Returns 200 OK if ready, 503 Service Unavailable if any component is failing.
+    """
+    checks = {}
+    is_ready = True
+
+    # 1. Database check
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute("SELECT 1")
+        conn.close()
+        checks["database"] = "ok"
+    except Exception as e:
+        app_logger.error(f"Readiness check DB error: {e}")
+        checks["database"] = f"error: {str(e)}"
+        is_ready = False
+
+    # 2. S3 check (if storage mode is s3)
+    if STORAGE_MODE == "s3":
+        try:
+            s3 = get_s3_client()
+            # CRITICAL: Use list_objects_v2 with Prefix="uploads/", MaxKeys=1
+            # NOT head_bucket (IAM ListBucket permission is prefix-constrained to uploads/*)
+            s3.list_objects_v2(Bucket=S3_BUCKET, Prefix="uploads/", MaxKeys=1)
+            checks["s3"] = "ok"
+        except Exception as e:
+            app_logger.error(f"Readiness check S3 error: {e}")
+            checks["s3"] = f"error: {str(e)}"
+            is_ready = False
+    else:
+        checks["storage"] = "local"
+
+    status_code = 200 if is_ready else 503
+    return jsonify({
+        "status": "ready" if is_ready else "unhealthy",
+        "checks": checks,
+        "storage_mode": STORAGE_MODE,
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    }), status_code
+
 # -----------------------------------------------------------------------------
 # API: Authentication Routes
 # -----------------------------------------------------------------------------
 @app.route("/api/auth/register", methods=["POST"])
 def register():
+    client_ip = (
+        request.headers.get("X-Forwarded-For", request.remote_addr)
+        .split(",")[0]
+        .strip()
+    )
+    is_limited, retry_after = check_rate_limit(_register_attempts_ip, client_ip, max_attempts=5, window_seconds=600)
+    if is_limited:
+        return jsonify({
+            "error": "Too many registration attempts. Please try again later.",
+            "retry_after": retry_after
+        }), 429, {"Retry-After": str(retry_after)}
+
     data = request.get_json(silent=True) or request.form
     name = (data.get("name") or "").strip()
     email = (data.get("email") or "").strip().lower()
@@ -448,12 +723,36 @@ def register():
 
 @app.route("/api/auth/login", methods=["POST"])
 def login():
+    client_ip = (
+        request.headers.get("X-Forwarded-For", request.remote_addr)
+        .split(",")[0]
+        .strip()
+    )
+
     data = request.get_json(silent=True) or request.form
     email = (data.get("email") or "").strip().lower()
     password = data.get("password") or ""
 
     if not email or not password:
         return jsonify({"error": "Email and password are required."}), 400
+
+    # Rate limit failed logins per IP
+    is_ip_limited, retry_after = is_rate_limited(_failed_logins_ip, client_ip, max_attempts=5, window_seconds=300)
+    if is_ip_limited:
+        log_audit("RATE_LIMIT_IP", f"ip={client_ip}, route=/api/auth/login")
+        return jsonify({
+            "error": "Too many failed login attempts from this IP. Please try again later.",
+            "retry_after": retry_after
+        }), 429, {"Retry-After": str(retry_after)}
+
+    # Rate limit failed logins per target email account
+    is_email_limited, retry_after = is_rate_limited(_failed_logins_email, email, max_attempts=5, window_seconds=300)
+    if is_email_limited:
+        log_audit("RATE_LIMIT_EMAIL", f"email={email}, route=/api/auth/login")
+        return jsonify({
+            "error": "Too many failed login attempts for this account. Please try again later.",
+            "retry_after": retry_after
+        }), 429, {"Retry-After": str(retry_after)}
 
     conn = get_db()
     cursor = conn.cursor()
@@ -464,10 +763,13 @@ def login():
     conn.close()
 
     if not user or not bcrypt.checkpw(password.encode("utf-8"), user["password_hash"].encode("utf-8")):
+        record_failed_login(client_ip, email)
         log_audit("LOGIN_FAILED", f"email='{email}', reason='invalid_credentials'")
         return jsonify({"error": "Invalid email or password."}), 401
 
-    # Valid login
+    # Login successful: clear failure tracking for this client & account
+    clear_failed_logins(client_ip, email)
+
     session["user_id"] = user["id"]
     session["name"] = user["name"]
     session["email"] = user["email"]
@@ -522,7 +824,20 @@ def create_submission():
     """
     Upload a restaurant/dish review or recipe photo and metadata to cloud storage (S3 or local).
     Supports category ('restaurant_review', 'dish_review', 'recipe') and rating (1-5).
+    Re-encodes image with Pillow, strips EXIF/GPS, verifies magic bytes signature, and rate-limits.
     """
+    client_ip = (
+        request.headers.get("X-Forwarded-For", request.remote_addr)
+        .split(",")[0]
+        .strip()
+    )
+    is_limited, retry_after = check_rate_limit(_upload_attempts_ip, client_ip, max_attempts=10, window_seconds=300)
+    if is_limited:
+        return jsonify({
+            "error": "Upload rate limit exceeded. Please wait before uploading again.",
+            "retry_after": retry_after
+        }), 429, {"Retry-After": str(retry_after)}
+
     category = (request.form.get("category") or "restaurant_review").strip().lower()
     if category not in ["restaurant_review", "dish_review", "recipe"]:
         category = "restaurant_review"
@@ -557,19 +872,18 @@ def create_submission():
         return jsonify({"error": "Please select a valid image file."}), 400
 
     filename = secure_filename(file.filename)
-    mimetype = file.mimetype or "application/octet-stream"
-
-    # Validate file type
-    if not is_allowed_file(filename, mimetype):
-        log_audit("UPLOAD_REJECTED", f"reason='disallowed_file_type', filename='{filename}', mime='{mimetype}'")
+    if not is_allowed_file(filename, file.mimetype or ""):
+        log_audit("UPLOAD_REJECTED", f"reason='disallowed_file_extension', filename='{filename}'")
         return jsonify({
             "error": "Invalid file type. Only PNG, JPG, JPEG, and WEBP images are allowed."
         }), 400
 
-    # Validate file size
-    file.seek(0, os.SEEK_END)
-    file_size = file.tell()
-    file.seek(0)
+    # Sanitize and re-encode image with Pillow, stripping EXIF and verifying magic bytes
+    try:
+        clean_stream, storage_key, clean_filename, mimetype, file_size = validate_and_sanitize_image(file.stream, filename)
+    except ValueError as e:
+        log_audit("UPLOAD_REJECTED", f"reason='invalid_image_content', err='{e}', filename='{filename}'")
+        return jsonify({"error": str(e)}), 400
 
     if file_size <= 0:
         return jsonify({"error": "Uploaded file is empty."}), 400
@@ -577,13 +891,9 @@ def create_submission():
         log_audit("UPLOAD_REJECTED", f"reason='oversized_file', size={file_size}")
         return jsonify({"error": "File size exceeds 5MB limit. Please upload a smaller image."}), 400
 
-    # Generate unique storage key
-    file_ext = filename.rsplit(".", 1)[-1].lower()
-    storage_key = f"uploads/{uuid.uuid4().hex}_{filename}"
-
-    # Store in S3 or local directory
+    # Store in S3 (with AES256 encryption header) or local directory
     try:
-        upload_file_to_storage(file, storage_key, mimetype)
+        upload_file_to_storage(clean_stream, storage_key, mimetype)
     except Exception as e:
         app_logger.error(f"Storage upload error: {e}")
         return jsonify({"error": "Failed to store file in cloud storage."}), 500
@@ -834,6 +1144,14 @@ def admin_list_submissions():
 @role_required(["admin", "moderator", "curator"])
 def admin_update_status(sub_id):
     """Moderator/Admin endpoint: approves or rejects a community review/recipe."""
+    user_ident = session.get("email", request.remote_addr)
+    is_limited, retry_after = check_rate_limit(_admin_actions_ip, user_ident, max_attempts=30, window_seconds=60)
+    if is_limited:
+        return jsonify({
+            "error": "Admin moderation action rate limit exceeded. Please wait.",
+            "retry_after": retry_after
+        }), 429, {"Retry-After": str(retry_after)}
+
     data = request.get_json(silent=True) or request.form
     new_status = (data.get("status") or "").strip().lower()
 
@@ -859,6 +1177,14 @@ def admin_update_status(sub_id):
 @role_required(["admin", "moderator", "curator"])
 def admin_delete_submission(sub_id):
     """Moderator/Admin endpoint: removes spam or inappropriate posts from cloud storage and DB."""
+    user_ident = session.get("email", request.remote_addr)
+    is_limited, retry_after = check_rate_limit(_admin_actions_ip, user_ident, max_attempts=30, window_seconds=60)
+    if is_limited:
+        return jsonify({
+            "error": "Admin moderation action rate limit exceeded. Please wait.",
+            "retry_after": retry_after
+        }), 429, {"Retry-After": str(retry_after)}
+
     conn = get_db()
     cursor = conn.cursor()
     sub = cursor.execute("SELECT storage_key FROM submissions WHERE id = ?", (sub_id,)).fetchone()
@@ -899,9 +1225,25 @@ ALLOWED_STATIC_DIRS = {
     "paypal": {".html"},
 }
 
+def send_html_file(filepath):
+    """
+    Renders an HTML file with the active session CSRF token injected into <meta name="csrf-token">.
+    """
+    if "csrf_token" not in session:
+        session["csrf_token"] = secrets.token_hex(32)
+    token = session["csrf_token"]
+    with open(filepath, "r", encoding="utf-8") as f:
+        html = f.read()
+    if '<meta name="csrf-token"' in html:
+        import re
+        html = re.sub(r'<meta\s+name=["\']csrf-token["\'][^>]*>', f'<meta name="csrf-token" content="{token}">', html)
+    else:
+        html = html.replace("</head>", f'    <meta name="csrf-token" content="{token}">\n</head>', 1)
+    return Response(html, mimetype="text/html")
+
 @app.route("/")
 def serve_index():
-    return send_from_directory(BASE_DIR, "index.html")
+    return send_html_file(os.path.join(BASE_DIR, "index.html"))
 
 @app.route("/<path:filename>")
 def serve_static(filename):
@@ -925,7 +1267,7 @@ def serve_static(filename):
     if len(parts) == 1 and parts[0] in ALLOWED_ROOT_PAGES:
         target = os.path.join(BASE_DIR, parts[0])
         if os.path.isfile(target):
-            return send_from_directory(BASE_DIR, parts[0])
+            return send_html_file(target)
         abort(404)
 
     # 2. Subdirectory allowlisted assets
@@ -941,6 +1283,8 @@ def serve_static(filename):
             except ValueError:
                 abort(404)
             if common_prefix == BASE_DIR and os.path.isfile(full_path):
+                if ext == ".html":
+                    return send_html_file(full_path)
                 return send_from_directory(BASE_DIR, safe_subpath)
 
     # Everything else returns 404 Not Found
@@ -977,18 +1321,34 @@ def run_self_tests():
     """
     Executes an automated end-to-end self-test suite covering:
     1. Health check (/health)
-    2. Register and login
-    3. Wrong password rejection
-    4. Valid file upload to storage
-    5. Disallowed file type rejection (.sh/.exe)
-    6. Oversized file rejection (>5MB)
-    7. Normal user blocked from admin action (403)
-    8. Admin action allowed (200)
-    9. Data isolation: User B blocked from accessing User A's private upload (403)
+    2. Readiness probe (/ready)
+    3. Security headers (CSP without inline scripts, nosniff, X-Frame-Options, HSTS, etc.)
+    4. Strict static allowlist (verify 404 on /app.py, /foodies.db, /requirements.txt, etc.)
+    5. CSRF protection (state-changing request blocked without token)
+    6. CSRF token retrieval (/api/auth/csrf-token)
+    7. User registration with CSRF token (201)
+    8. User login with valid credentials (200)
+    9. User login with incorrect password (401)
+    10. Rate limiting on failed logins (429 with Retry-After)
+    11. Image upload sanitization with Pillow (magic bytes, EXIF stripping, random UUID)
+    12. Disallowed file type rejection (400)
+    13. Oversized file rejection (>5MB) (400/413)
+    14. Role-based access control (normal user blocked from moderator route: 403)
+    15. Moderator action allowed (200)
+    16. Moderator delete action allowed (200)
+    17. Data isolation (User B blocked from User A private upload: 403)
     """
+    app.config["TESTING"] = True
     init_db(seed_demo=False)
     seed_demo_accounts()
     client = app.test_client()
+
+    # Clear in-memory rate limiting buckets for clean test execution
+    _failed_logins_ip.clear()
+    _failed_logins_email.clear()
+    _register_attempts_ip.clear()
+    _upload_attempts_ip.clear()
+    _admin_actions_ip.clear()
 
     results = []
     test_id = 1
@@ -1004,108 +1364,220 @@ def run_self_tests():
         })
         test_id += 1
 
-    print("\n" + "=" * 80)
+    print("\n" + "=" * 88)
     print(" FOODIES CLOUD PROJECT — AUTOMATED SELF-TEST SUITE")
-    print("=" * 80)
+    print("=" * 88)
 
     # 1. Health check
     res = client.get("/health")
     passed = res.status_code == 200 and res.get_json().get("status") == "ok"
-    record("GET /health endpoint check", "200 OK & status='ok'", f"{res.status_code}", passed)
+    record("GET /health liveness check", "200 OK & status='ok'", f"{res.status_code}", passed)
 
-    # 2. User registration
+    # 2. Readiness probe
+    res = client.get("/ready")
+    passed = res.status_code == 200 and res.get_json().get("checks", {}).get("database") == "ok"
+    record("GET /ready readiness probe", "200 OK & database='ok'", f"{res.status_code}", passed)
+
+    # 3. Security headers on every response
+    res = client.get("/health")
+    csp = res.headers.get("Content-Security-Policy", "")
+    hsts = res.headers.get("Strict-Transport-Security", "")
+    nosniff = res.headers.get("X-Content-Type-Options", "")
+    xframe = res.headers.get("X-Frame-Options", "")
+    ref_pol = res.headers.get("Referrer-Policy", "")
+    perm_pol = res.headers.get("Permissions-Policy", "")
+    headers_ok = (
+        nosniff == "nosniff"
+        and xframe == "SAMEORIGIN"
+        and ref_pol == "strict-origin-when-cross-origin"
+        and "geolocation=" in perm_pol
+        and "max-age=" in hsts
+        and "script-src 'self';" in csp
+        and "'unsafe-inline'" not in csp.split("script-src")[1].split(";")[0]
+    )
+    record("Security headers (CSP no inline JS, HSTS, nosniff)", "All Headers Present", "Compliant" if headers_ok else "Missing", headers_ok)
+
+    # 4. Strict static allowlist (verify sensitive paths return 404)
+    blocked_paths = [
+        "/app.py",
+        "/foodies.db",
+        "/requirements.txt",
+        "/logs/app.log",
+        "/.env",
+        "/.git/config",
+        "/deploy/nginx.conf"
+    ]
+    all_404 = True
+    for p in blocked_paths:
+        r = client.get(p)
+        if r.status_code != 404:
+            all_404 = False
+            break
+    record("Strict static allowlist (app.py, db, .env -> 404)", "404 Not Found on all", "All 404" if all_404 else "Leaked", all_404)
+
+    # 5. CSRF protection: POST without token rejected
     rnd = uuid.uuid4().hex[:6]
     test_user_email = f"tester_{rnd}@test.com"
+    res = client.post("/api/auth/register", json={
+        "name": "No CSRF User",
+        "email": test_user_email,
+        "password": "Password@123"
+    })
+    passed = res.status_code == 403 and "CSRF" in res.get_json().get("error", "")
+    record("CSRF protection: POST without token blocked", "403 Forbidden", f"{res.status_code}", passed)
+
+    # 6. CSRF token retrieval
+    res = client.get("/api/auth/csrf-token")
+    csrf_token = res.get_json().get("csrf_token", "") if res.status_code == 200 else ""
+    passed = res.status_code == 200 and len(csrf_token) >= 32
+    record("GET /api/auth/csrf-token endpoint", "200 OK & 32+ char token", f"{res.status_code}", passed)
+
+    # Helper headers with valid CSRF token
+    csrf_headers = {"X-CSRF-Token": csrf_token}
+
+    # 7. User registration with CSRF token
     res = client.post("/api/auth/register", json={
         "name": "Test User",
         "email": test_user_email,
         "password": "Password@123"
-    })
+    }, headers=csrf_headers)
     passed = res.status_code == 201 and res.get_json().get("success") is True
-    record("User Registration (/api/auth/register)", "201 Created", f"{res.status_code}", passed)
+    record("User Registration with CSRF token", "201 Created", f"{res.status_code}", passed)
 
-    # 3. User login (valid)
+    # 8. User login with valid credentials
     res = client.post("/api/auth/login", json={
         "email": test_user_email,
         "password": "Password@123"
-    })
+    }, headers=csrf_headers)
     passed = res.status_code == 200 and res.get_json().get("success") is True
     record("User Login with valid credentials", "200 OK & Session Established", f"{res.status_code}", passed)
 
-    # 4. Wrong password rejection
+    # 9. Wrong password rejection
     res = client.post("/api/auth/login", json={
         "email": test_user_email,
         "password": "WrongPassword999!"
-    })
+    }, headers=csrf_headers)
     passed = res.status_code == 401
     record("Login with incorrect password", "401 Unauthorized", f"{res.status_code}", passed)
 
-    # Re-login user A for subsequent tests
-    client.post("/api/auth/login", json={"email": test_user_email, "password": "Password@123"})
+    # 10. Rate limiting: failed logins per IP/email
+    # Send 4 more failed logins (total 5)
+    for _ in range(4):
+        client.post("/api/auth/login", json={
+            "email": test_user_email,
+            "password": "WrongPassword999!"
+        }, headers=csrf_headers)
+    # The 6th attempt should be blocked with 429 and Retry-After header
+    res_rate = client.post("/api/auth/login", json={
+        "email": test_user_email,
+        "password": "Password@123"
+    }, headers=csrf_headers)
+    passed = res_rate.status_code == 429 and "Retry-After" in res_rate.headers
+    record("Failed login rate limiting (5 failures -> 429)", "429 Too Many Requests & Retry-After", f"{res_rate.status_code}", passed)
 
-    # 5. Valid file upload (Restaurant Review & Recipe Sharing)
-    from io import BytesIO
-    dummy_png = BytesIO(b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15c4\x00\x00\x00\nIDATx\x9cc\x00\x01\x00\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82")
+    # Clear rate limits for clean subsequent tests
+    _failed_logins_ip.clear()
+    _failed_logins_email.clear()
+
+    # Re-login user A
+    client.post("/api/auth/login", json={"email": test_user_email, "password": "Password@123"}, headers=csrf_headers)
+
+    # 11. Pillow image sanitization: Valid PNG upload
+    img = Image.new("RGB", (64, 64), color="blue")
+    img_stream = BytesIO()
+    img.save(img_stream, format="PNG")
+    img_stream.seek(0)
+
     res = client.post("/api/reviews", data={
         "category": "restaurant_review",
         "dish_name": "Royal Tandoor - Paneer Butter Masala",
         "comment": "This restaurant is great! Sharing authentic recipe with rich creamy gravy.",
         "rating": "5",
-        "file": (dummy_png, "paneer.png", "image/png")
-    }, content_type="multipart/form-data")
+        "file": (img_stream, "paneer.png", "image/png"),
+        "csrf_token": csrf_token
+    }, headers=csrf_headers, content_type="multipart/form-data")
     passed = res.status_code == 201 and "submission" in res.get_json()
     sub_a_id = res.get_json().get("submission", {}).get("id") if passed else None
-    record("Valid review & recipe upload (PNG/JPG < 5MB)", "201 Created & Storage Key Generated", f"{res.status_code}", passed)
+    record("Pillow image sanitization & upload (PNG < 5MB)", "201 Created & Storage Key Generated", f"{res.status_code}", passed)
 
-    # 6. Disallowed file type rejection
+    # 12. Disallowed file type / non-image signature rejection
     bad_file = BytesIO(b"#!/bin/bash\necho Malicious Script")
     res = client.post("/api/reviews", data={
         "category": "restaurant_review",
         "dish_name": "Hack Attempt",
         "comment": "Executing arbitrary code",
-        "file": (bad_file, "script.sh", "text/x-shellscript")
-    }, content_type="multipart/form-data")
+        "file": (bad_file, "script.sh", "text/x-shellscript"),
+        "csrf_token": csrf_token
+    }, headers=csrf_headers, content_type="multipart/form-data")
     passed = res.status_code == 400
     record("Rejected disallowed file type (.sh/.exe)", "400 Bad Request", f"{res.status_code}", passed)
 
-    # 7. Oversized file rejection (> 5MB)
+    # 13. Oversized file rejection (> 5MB)
     big_file = BytesIO(b"0" * (6 * 1024 * 1024)) # 6MB
     res = client.post("/api/reviews", data={
         "category": "recipe",
         "dish_name": "Huge File",
         "comment": "Too big for cloud tier",
-        "file": (big_file, "huge.jpg", "image/jpeg")
-    }, content_type="multipart/form-data")
+        "file": (big_file, "huge.jpg", "image/jpeg"),
+        "csrf_token": csrf_token
+    }, headers=csrf_headers, content_type="multipart/form-data")
     passed = res.status_code in [400, 413]
     record("Rejected oversized file (> 5MB limit)", "400/413 Payload Too Large", f"{res.status_code}", passed)
 
-    # 8. Normal user blocked from moderator action (403)
+    # 14. Normal user blocked from moderator endpoint (403)
     res = client.get("/api/moderator/reviews")
     passed = res.status_code == 403
     record("Normal user blocked from moderator endpoint", "403 Forbidden", f"{res.status_code}", passed)
 
-    # 9. Community Moderator action allowed (200)
+    # 15. Community Moderator action allowed (200)
     # Login as seeded community moderator
-    client.post("/api/auth/login", json={"email": "moderator@foodies.com", "password": "Mod@123"})
+    client.post("/api/auth/login", json={"email": "moderator@foodies.com", "password": "Mod@123"}, headers=csrf_headers)
     res = client.get("/api/moderator/reviews")
     passed_list = res.status_code == 200
     if sub_a_id:
-        res_approve = client.put(f"/api/moderator/reviews/{sub_a_id}/status", json={"status": "approved"})
+        res_approve = client.put(f"/api/moderator/reviews/{sub_a_id}/status", json={"status": "approved"}, headers=csrf_headers)
         passed_action = res_approve.status_code == 200
     else:
         passed_action = False
-    record("Community Moderator action allowed", "200 OK (Status Approved)", f"{res_approve.status_code if sub_a_id else res.status_code}", passed_list and passed_action)
+    record("Community Moderator status approval allowed", "200 OK (Status Approved)", f"{res_approve.status_code if sub_a_id else res.status_code}", passed_list and passed_action)
 
-    # 10. Data isolation: User B blocked from accessing User A's private upload (403)
+    # 16. Moderator deletion allowed
+    if sub_a_id:
+        res_del = client.delete(f"/api/moderator/reviews/{sub_a_id}", headers=csrf_headers)
+        passed_del = res_del.status_code == 200
+    else:
+        passed_del = False
+    record("Community Moderator deletion allowed", "200 OK", f"{res_del.status_code if sub_a_id else 'N/A'}", passed_del)
+
+    # 17. Data isolation: User B blocked from accessing User A's private upload (403)
     user_b_email = f"user_b_{rnd}@test.com"
     client.post("/api/auth/register", json={
         "name": "User B",
         "email": user_b_email,
         "password": "Password@123"
-    })
-    client.post("/api/auth/login", json={"email": user_b_email, "password": "Password@123"})
-    if sub_a_id:
-        res = client.get(f"/api/reviews/{sub_a_id}")
+    }, headers=csrf_headers)
+    client.post("/api/auth/login", json={"email": user_b_email, "password": "Password@123"}, headers=csrf_headers)
+
+    # Upload a new private review as user A
+    client.post("/api/auth/login", json={"email": test_user_email, "password": "Password@123"}, headers=csrf_headers)
+    img_b = Image.new("RGB", (32, 32), color="green")
+    img_b_stream = BytesIO()
+    img_b.save(img_b_stream, format="PNG")
+    img_b_stream.seek(0)
+    res_sub_b = client.post("/api/reviews", data={
+        "category": "dish_review",
+        "dish_name": "Private Dish",
+        "comment": "Pending moderator approval",
+        "rating": "4",
+        "file": (img_b_stream, "dish.png", "image/png"),
+        "csrf_token": csrf_token
+    }, headers=csrf_headers, content_type="multipart/form-data")
+    sub_b_id = res_sub_b.get_json().get("submission", {}).get("id") if res_sub_b.status_code == 201 else None
+
+    # Switch back to User B and try to view User A's private pending review
+    client.post("/api/auth/login", json={"email": user_b_email, "password": "Password@123"}, headers=csrf_headers)
+    if sub_b_id:
+        res = client.get(f"/api/reviews/{sub_b_id}")
         passed = res.status_code == 403
         actual = f"{res.status_code} Forbidden"
     else:

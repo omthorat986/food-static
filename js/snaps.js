@@ -180,12 +180,26 @@
             .catch(function () {});
     }
 
+    function getCsrfToken() {
+        if (window.Foodies && window.Foodies.getCsrfToken) return window.Foodies.getCsrfToken();
+        var match = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
+        if (match && match[1]) return decodeURIComponent(match[1]);
+        var meta = document.querySelector('meta[name="csrf-token"]');
+        if (meta && meta.getAttribute("content")) return meta.getAttribute("content");
+        return window.__CSRF_TOKEN__ || "";
+    }
+
     function handleAdminAction(id, action) {
         if (action === "delete") {
             if (!confirm("Are you sure you want to permanently delete submission #" + id + " and remove its object from cloud storage?")) {
                 return;
             }
-            fetch("/api/admin/submissions/" + id, { method: "DELETE" })
+            fetch("/api/admin/submissions/" + id, {
+                method: "DELETE",
+                headers: {
+                    "X-CSRF-Token": getCsrfToken()
+                }
+            })
                 .then(function (res) { return res.json(); })
                 .then(function () {
                     if (window.Foodies && window.Foodies.toast) window.Foodies.toast("Submission #" + id + " deleted from cloud storage.");
@@ -200,7 +214,10 @@
             // Update status (approve / reject)
             fetch("/api/admin/submissions/" + id + "/status", {
                 method: "PUT",
-                headers: { "Content-Type": "application/json" },
+                headers: {
+                    "Content-Type": "application/json",
+                    "X-CSRF-Token": getCsrfToken()
+                },
                 body: JSON.stringify({ status: action })
             })
             .then(function (res) { return res.json(); })
@@ -264,10 +281,14 @@
                 return;
             }
 
+            var token = getCsrfToken();
             var formData = new FormData();
             formData.append("dish_name", dishName);
             formData.append("comment", comment);
             formData.append("file", file);
+            if (token) {
+                formData.append("csrf_token", token);
+            }
 
             submitBtn.disabled = true;
             submitBtn.textContent = "Uploading to Cloud Storage...";
@@ -275,6 +296,9 @@
 
             fetch("/api/submissions", {
                 method: "POST",
+                headers: {
+                    "X-CSRF-Token": token
+                },
                 body: formData
             })
             .then(function (res) {
