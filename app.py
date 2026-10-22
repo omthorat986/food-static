@@ -33,9 +33,24 @@ from werkzeug.utils import secure_filename
 # Configuration
 # -----------------------------------------------------------------------------
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
-LOGS_DIR = os.path.join(BASE_DIR, "logs")
-LOCAL_UPLOADS_DIR = os.path.join(BASE_DIR, "local_uploads")
-DB_PATH = os.path.join(BASE_DIR, os.environ.get("DATABASE_PATH", "foodies.db"))
+APP_ENV = os.environ.get("APP_ENV", "development").lower()
+
+if "DATABASE_PATH" in os.environ:
+    _raw_db = os.environ["DATABASE_PATH"]
+    DB_PATH = _raw_db if os.path.isabs(_raw_db) else os.path.join(BASE_DIR, _raw_db)
+elif APP_ENV == "production":
+    DB_PATH = "/var/lib/foodies/foodies.db"
+else:
+    DB_PATH = os.path.join(BASE_DIR, "foodies.db")
+
+if "LOGS_DIR" in os.environ:
+    LOGS_DIR = os.environ["LOGS_DIR"]
+elif APP_ENV == "production":
+    LOGS_DIR = "/var/log/foodies"
+else:
+    LOGS_DIR = os.path.join(BASE_DIR, "logs")
+
+LOCAL_UPLOADS_DIR = os.environ.get("LOCAL_UPLOADS_DIR", os.path.join(BASE_DIR, "local_uploads"))
 
 STORAGE_MODE = os.environ.get("STORAGE_MODE", "local").lower() # 'local' or 's3'
 S3_BUCKET = os.environ.get("S3_BUCKET", "foodies-cloud-storage")
@@ -45,9 +60,15 @@ MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024  # 5 MB
 ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "webp"}
 ALLOWED_MIMETYPES = {"image/png", "image/jpeg", "image/pjpeg", "image/webp"}
 
-# Ensure required directories exist
-os.makedirs(LOGS_DIR, exist_ok=True)
-os.makedirs(LOCAL_UPLOADS_DIR, exist_ok=True)
+# Ensure required directories exist when possible
+try:
+    os.makedirs(LOGS_DIR, exist_ok=True)
+except Exception:
+    pass
+try:
+    os.makedirs(LOCAL_UPLOADS_DIR, exist_ok=True)
+except Exception:
+    pass
 
 # -----------------------------------------------------------------------------
 # Flask App Setup
@@ -89,13 +110,18 @@ app_logger.propagate = False
 app_logger.handlers.clear()
 
 log_file_path = os.path.join(LOGS_DIR, "app.log")
-file_handler = RotatingFileHandler(log_file_path, maxBytes=2 * 1024 * 1024, backupCount=5)
 log_formatter = logging.Formatter(
     "%(asctime)s [%(levelname)s] [IP: %(client_ip)s] [User: %(user_ident)s] %(message)s"
 )
-file_handler.setFormatter(log_formatter)
-file_handler.addFilter(RequestContextFilter())
-app_logger.addHandler(file_handler)
+
+try:
+    os.makedirs(os.path.dirname(log_file_path), exist_ok=True)
+    file_handler = RotatingFileHandler(log_file_path, maxBytes=2 * 1024 * 1024, backupCount=5)
+    file_handler.setFormatter(log_formatter)
+    file_handler.addFilter(RequestContextFilter())
+    app_logger.addHandler(file_handler)
+except Exception as _log_init_err:
+    sys.stderr.write(f"Notice: File logging at {log_file_path} unavailable ({_log_init_err}). Logging to stream.\n")
 
 # Also log to console for development visibility
 console_handler = logging.StreamHandler(sys.stdout)
@@ -116,8 +142,18 @@ def get_db():
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
-def init_db():
-    """Initializes tables and seeds default user and admin accounts."""
+def init_db(seed_demo=False):
+    """
+    Initializes database tables and columns idempotently.
+    In production (APP_ENV=production), demo accounts are NEVER seeded.
+    """
+    db_dir = os.path.dirname(DB_PATH)
+    if db_dir:
+        try:
+            os.makedirs(db_dir, exist_ok=True)
+        except Exception:
+            pass
+
     conn = get_db()
     cursor = conn.cursor()
 
@@ -162,6 +198,27 @@ def init_db():
 
     conn.commit()
 
+    if seed_demo:
+        seed_demo_accounts(conn)
+
+    conn.close()
+
+def seed_demo_accounts(conn=None):
+    """
+    Seeds default demo accounts for local development and self-testing.
+    CRITICAL: Never seeds demo accounts when APP_ENV == 'production'.
+    """
+    if APP_ENV == "production":
+        app_logger.warning("Refusing to seed demo accounts in production environment (APP_ENV=production).")
+        return False
+
+    should_close = False
+    if conn is None:
+        conn = get_db()
+        should_close = True
+
+    cursor = conn.cursor()
+
     # Seed Admin User if not present: admin@foodies.com / Admin@123
     admin = cursor.execute("SELECT id FROM users WHERE email = 'admin@foodies.com'").fetchone()
     if not admin:
@@ -192,7 +249,45 @@ def init_db():
         )
         conn.commit()
 
+    if should_close:
+        conn.close()
+    return True
+
+def create_admin_user(email, password, name="Administrator"):
+    """
+    Creates an administrator user account with role='admin'.
+    Enforces valid email format and password length >= 10 characters.
+    """
+    email = (email or "").strip().lower()
+    if not email or "@" not in email:
+        raise ValueError("A valid email address is required.")
+    if not password or len(password) < 10:
+        raise ValueError("Admin password must be at least 10 characters long.")
+
+    init_db(seed_demo=False)
+    conn = get_db()
+    cursor = conn.cursor()
+    existing = cursor.execute("SELECT id FROM users WHERE email = ?", (email,)).fetchone()
+    if existing:
+        conn.close()
+        raise ValueError(f"User with email '{email}' already exists.")
+
+    pw_hash = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+    cursor.execute(
+        "INSERT INTO users (name, email, password_hash, role) VALUES (?, ?, ?, ?)",
+        (name, email, pw_hash, "admin")
+    )
+    conn.commit()
+    user_id = cursor.lastrowid
     conn.close()
+    log_audit("ADMIN_USER_CREATED", f"id={user_id}, email='{email}', role='admin'")
+    return user_id
+
+# Initialize database schema automatically on import across all WSGI servers
+try:
+    init_db(seed_demo=(APP_ENV != "production" and os.environ.get("SEED_DEMO", "false").lower() == "true"))
+except Exception as _e:
+    app_logger.warning(f"Automatic DB schema initialization on import encountered: {_e}")
 
 # -----------------------------------------------------------------------------
 # S3 & Storage Helper Functions
@@ -837,7 +932,8 @@ def run_self_tests():
     8. Admin action allowed (200)
     9. Data isolation: User B blocked from accessing User A's private upload (403)
     """
-    init_db()
+    init_db(seed_demo=False)
+    seed_demo_accounts()
     client = app.test_client()
 
     results = []
