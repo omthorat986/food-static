@@ -152,7 +152,7 @@ This runbook provides complete, step-by-step instructions for deploying the **Fo
 
 3. Clone the repository into `/opt/foodies`:
    ```bash
-   sudo GIT_SSH_COMMAND="ssh -i /home/ubuntu/.ssh/id_ed25519_deploy -o IdentitiesOnly=yes" \
+   sudo GIT_SSH_COMMAND="ssh -i $HOME/.ssh/id_ed25519_deploy -o IdentitiesOnly=yes" \
        git clone git@github.com:omthorat986/food-static.git /opt/foodies
 
    # Set ownership and permissions

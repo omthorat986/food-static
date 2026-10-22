@@ -575,6 +575,7 @@ def set_security_headers(response):
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
         "font-src 'self' https://fonts.gstatic.com; "
         "script-src 'self'; "
+        "form-action 'self' https://*.list-manage.com; "
         "connect-src 'self'; "
         "frame-ancestors 'self';"
     )

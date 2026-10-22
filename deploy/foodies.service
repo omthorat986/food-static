@@ -8,14 +8,25 @@ User=foodies
 Group=foodies
 WorkingDirectory=/opt/foodies
 
+# Systemd directory management: automatically creates /var/lib/foodies and /var/log/foodies
+# with owner foodies:foodies and permissions 0750
+StateDirectory=foodies
+StateDirectoryMode=0750
+LogsDirectory=foodies
+LogsDirectoryMode=0750
+
 # Securely load production secrets and configuration
 EnvironmentFile=/etc/foodies/foodies.env
 Environment="PATH=/opt/foodies/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin"
 Environment="PORT=8080"
 Environment="HOST=127.0.0.1"
 
-# Ensure runtime directories exist and apply schema migrations idempotently
-ExecStartPre=/bin/mkdir -p /var/log/foodies /var/lib/foodies
+# Folder creation with '+' prefix ensures root execution regardless of User=foodies
+ExecStartPre=+/bin/mkdir -p /var/log/foodies /var/lib/foodies
+ExecStartPre=+/bin/chown -R foodies:foodies /var/log/foodies /var/lib/foodies
+ExecStartPre=+/bin/chmod 750 /var/log/foodies /var/lib/foodies
+
+# Database migrations run as User=foodies
 ExecStartPre=/opt/foodies/venv/bin/python manage.py migrate
 
 ExecStart=/opt/foodies/venv/bin/gunicorn \

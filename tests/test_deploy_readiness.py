@@ -202,6 +202,8 @@ class TestDeploymentReadiness(unittest.TestCase):
             content = f.read()
 
         self.assertIn("Type=simple", content)
+        self.assertIn("StateDirectory=foodies", content)
+        self.assertIn("LogsDirectory=foodies", content)
         self.assertIn("EnvironmentFile=/etc/foodies/foodies.env", content)
         self.assertIn("ReadWritePaths=/var/lib/foodies /var/log/foodies -/tmp", content)
         self.assertIn("WorkingDirectory=/opt/foodies", content)
