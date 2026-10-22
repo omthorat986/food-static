@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Foodies - Food Delivery</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body data-base="">
+
+<header>
+    <nav class="navbar">
+        <div class="logo-container">
+            <span class="brand-text">FOODIES</span>
+        </div>
+        <div class="nav-links">
+            <a class="nav-item" id="nav-login" href="login.html">Log in</a>
+            <a class="nav-item" id="nav-register" href="register.html">Sign up</a>
+            <span class="nav-item" id="nav-greeting" hidden>Hello, <strong id="nav-user"></strong> <span id="nav-role-badge" class="role-badge" hidden>Admin</span></span>
+            <a class="nav-item" id="nav-logout" href="#">Logout</a>
+            <a class="nav-item" href="reviews.html">Reviews & Recipes</a>
+            <a class="nav-item" href="orders.html">View Orders</a>
+            <a class="cart-btn" href="cart/cart.html">Cart (<span id="cart-count">0</span>)</a>
+        </div>
+    </nav>
+</header>
+
+<section class="hero">
+    <div class="hero-content">
+        <h1 class="hero-title">Foodies</h1>
+        <p>Discover the best food and drinks in your city</p>
+        <div class="search-container">
+            <input
+                type="text"
+                id="searchInput"
+                placeholder="Search for cuisine or a dish"
+                aria-label="Search food">
+        </div>
+        <div id="searchResults"></div>
+    </div>
+</section>
+
+<main class="container">
+    <h2 id="exploreTitle">Explore by Cuisine</h2>
+    <section class="cuisine-grid">
+
+        <a href="cuisine/chinese.html"
+            class="cat-card"
+            data-name="chinese noodles fried rice manchurian schezwan rice hakka noodles spring rolls chilli paneer chilli chicken dumplings momo soup">
+            <img src="images/chinese.jpg" alt="Chinese">
+            <div class="cat-info">
+                <h3>Chinese</h3>
+                <p>Noodles, Manchurian, Fried Rice and more</p>
+            </div>
+        </a>
+
+        <a href="cuisine/south-indian.html"
+            class="cat-card"
+            data-name="south indian masala dosa paper dosa rava dosa poha idli sambar medu vada lemon rice coconut rice tamarind rice tomato rice">
+            <img src="images/south_indian.jpg" alt="South Indian">
+            <div class="cat-info">
+                <h3>South Indian</h3>
+                <p>Dosa, Idli, Vada, Sambar and more</p>
+            </div>
+        </a>
+
+        <a href="cuisine/north-indian.html"
+            class="cat-card"
+            data-name="north indian butter chicken naan paneer tikka dal makhani chole bhature rajma chawal tandoori roti biryani kebab">
+            <img src="images/north-indian.jpg" alt="North Indian" loading="lazy">
+            <div class="cat-info">
+                <h3>North Indian</h3>
+                <p>Butter Chicken, Naan, Paneer Tikka and more</p>
+            </div>
+        </a>
+
+        <a href="cuisine/maharashtrian.html"
+            class="cat-card"
+            data-name="maharashtrian puran poli misal pav vada pav sabudana khichdi thalipeeth poha bhakri pithla shrikhand kothimbir vadi">
+            <img src="images/maharashtrian.jpeg" alt="Maharashtrian Cuisine" loading="lazy">
+            <div class="cat-info">
+                <h3>Maharashtrian</h3>
+                <p>Puran Poli, Misal Pav, Vada Pav and more</p>
+            </div>
+        </a>
+
+        <a href="cuisine/gujarati.html"
+            class="cat-card"
+            data-name="gujarati dhokla thepla khandvi fafda jalebi undhiyu khichdi kadhi handvo sev tameta dal">
+            <img src="images/gujarati_food.jpg" alt="Gujarati">
+            <div class="cat-info">
+                <h3>Gujarati</h3>
+                <p>Dhokla, Thepla, Khandvi and more</p>
+            </div>
+        </a>
+
+        <a href="cuisine/bengali.html"
+            class="cat-card"
+            data-name="bengali fish curry luchi rasgulla aloo dum mishti doi kosha mangsho chingri malai curry sandesh">
+            <img src="images/nonveg.jpg" alt="Bengali">
+            <div class="cat-info">
+                <h3>Bengali</h3>
+                <p>Fish Curry, Luchi, Rasgulla and more</p>
+            </div>
+        </a>
+
+        <a href="cuisine/western.html"
+            class="cat-card"
+            data-name="western pizza burger pasta sandwich french fries garlic bread hot dog steak lasagna taco nachos">
+            <img src="images/western.avif" alt="Western">
+            <div class="cat-info">
+                <h3>Western</h3>
+                <p>Pizza, Burger, Pasta, Sandwich and more</p>
+            </div>
+        </a>
+
+        <a href="cuisine/sweet.html"
+            class="cat-card"
+            data-name="sweets jalebi gulab jamun barfi laddu rasgulla kaju katli mysore pak rasmalai soan papdi">
+            <img src="images/sweet.jpg" alt="Indian Sweets">
+            <div class="cat-info">
+                <h3>Indian Sweets</h3>
+                <p>Laddu, Jalebi, Barfi, Gulab Jamun and more</p>
+            </div>
+        </a>
+
+    </section>
+    <p id="noResults" class="no-results">
+        No results found
+    </p>
+
+</main>
+
+<section class="newsletter-section">
+    <div class="newsletter-card">
+        <div class="newsletter-copy">
+            <span class="newsletter-eyebrow">Promotional Updates</span>
+            <h2>Get exclusive food offers in your inbox</h2>
+            <p>Subscribe to receive discount drops, festive specials, and new menu highlights from Foodies.</p>
+        </div>
+
+        <div class="newsletter-form-wrap" id="mc_embed_signup">
+            <form
+                action="https://gmail.us8.list-manage.com/subscribe/post?u=6645791817f89909b0a950113&amp;id=681db5c58f&amp;f_id=00997ce1f0"
+                method="post"
+                id="mc-embedded-subscribe-form"
+                name="mc-embedded-subscribe-form"
+                class="newsletter-form validate"
+                target="_blank"
+                novalidate
+            >
+                <label for="mce-EMAIL" class="newsletter-label">Email Address</label>
+                <div class="newsletter-input-row">
+                    <input
+                        type="email"
+                        name="EMAIL"
+                        class="required email newsletter-input"
+                        id="mce-EMAIL"
+                        placeholder="Enter your email address"
+                        required
+                    >
+                    <input type="submit" name="subscribe" id="mc-embedded-subscribe" class="newsletter-btn" value="Subscribe">
+                </div>
+                <p class="newsletter-note">We only send promotional emails and special offers.</p>
+                <div aria-hidden="true" class="newsletter-honeypot">
+                    <input type="text" name="b_6645791817f89909b0a950113_681db5c58f" tabindex="-1" value="">
+                </div>
+            </form>
+        </div>
+    </div>
+</section>
+
+<footer class="footer">
+    <div class="footer-container">
+
+        <div class="footer-brand">
+            <h2>FOODIES</h2>
+            <p>Discover the best food and drinks in your city.</p>
+        </div>
+
+        <div class="footer-contact">
+            <h4>Contact</h4>
+            <p>Email: support@foodies.com</p>
+            <p>Phone: +91 98765 43210</p>
+        </div>
+
+        <div class="footer-contact">
+            <h4>Quick Links</h4>
+            <a href="index.html">Home</a>
+            <a href="reviews.html">Reviews & Recipes</a>
+            <a href="orders.html">My Orders</a>
+            <a href="cart/cart.html">Cart</a>
+        </div>
+
+    </div>
+
+    <div class="footer-bottom">
+        &copy; 2026 FOODIES. All rights reserved.
+    </div>
+</footer>
+
+<script src="js/food-data.js"></script>
+<script src="js/store.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>

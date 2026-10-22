@@ -1,0 +1,26 @@
+# Foodies static site - ignore OS/editor/browser artifacts
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Editor folders
+.vscode/
+.idea/
+*.swp
+
+# Node (only if a dev server like `npx serve` is used)
+node_modules/
+package-lock.json
+
+# Logs
+*.log
+logs/
+
+# Cloud project local files & secrets
+.env
+*.db
+local_uploads/
+__pycache__/
+*.pyc
+venv/
+.pytest_cache/

@@ -1,0 +1,79 @@
+*{
+margin:0;
+padding:0;
+box-sizing:border-box;
+font-family:Arial, Helvetica, sans-serif;
+}
+
+.register-box{
+
+width:380px;
+padding:40px;
+background:white;
+border-radius:10px;
+box-shadow:0 8px 20px rgba(0,0,0,0.2);
+text-align:center;
+
+}
+
+.register-box h2{
+margin-bottom:25px;
+color:#ff4d4d;
+}
+
+.register-box input{
+
+width:100%;
+padding:12px;
+margin:10px 0;
+border:1px solid #ddd;
+border-radius:5px;
+
+}
+
+.register-box button{
+
+width:100%;
+padding:12px;
+background:#ff4d4d;
+border:none;
+color:white;
+font-size:16px;
+border-radius:5px;
+cursor:pointer;
+transition:0.3s;
+
+}
+
+.register-box button:hover{
+background:#e63b3b;
+}
+
+body{
+height:100vh;
+display:flex;
+justify-content:center;
+align-items:center;
+background:url("../images/hero.jpg");
+background-size:cover;
+background-position:center;
+}
+
+.register-box p{
+margin-top:15px;
+}
+
+.register-box a{
+color:#ff4d4d;
+text-decoration:none;
+font-weight:bold;
+}
+
+/* ---- Static-site additions ---- */
+.message { font-weight: bold; margin: 8px 0 4px; font-size: 0.95rem; }
+.message.error { color: #e74c3c; }
+.message.success { color: #27ae60; }
+.demo-note { font-size: 0.78rem; color: #8a8a8a; margin-top: 14px; line-height: 1.45; }
+.captcha-row { text-align: left; font-size: 0.9rem; color: #444; margin-top: 6px; }
+.captcha-row strong { letter-spacing: 3px; color: #1c1c1c; }
+.input-error { border-color: #e74c3c !important; }

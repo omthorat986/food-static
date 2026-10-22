@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Restaurant Reviews & Recipe Sharing - Foodies</title>
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/reviews.css">
+</head>
+<body data-base="">
+
+<header>
+    <nav class="navbar">
+        <div class="logo-container">
+            <a href="index.html" class="brand-text" style="text-decoration:none;">FOODIES</a>
+        </div>
+        <div class="nav-links">
+            <a class="nav-item" id="nav-login" href="login.html">Log in</a>
+            <a class="nav-item" id="nav-register" href="register.html">Sign up</a>
+            <span class="nav-item" id="nav-greeting" hidden>Hello, <strong id="nav-user"></strong> <span id="nav-role-badge" class="role-badge" hidden>Moderator</span></span>
+            <a class="nav-item" id="nav-logout" href="#">Logout</a>
+            <a class="nav-item" href="reviews.html" style="color:#ef4f5f; font-weight:700;">Reviews & Recipes</a>
+            <a class="nav-item" href="orders.html">View Orders</a>
+            <a class="cart-btn" href="cart/cart.html">Cart (<span id="cart-count">0</span>)</a>
+        </div>
+    </nav>
+</header>
+
+<section class="reviews-hero">
+    <div class="reviews-hero-content">
+        <h1>Restaurant Reviews & Recipe Sharing</h1>
+        <p>Discover why "this restaurant is great!", share secret culinary recipes, and rate iconic dishes — moderated by our trusted community.</p>
+    </div>
+</section>
+
+<main class="reviews-container">
+
+    <!-- Section 1: Review & Recipe Submission Form -->
+    <section class="review-card">
+        <div class="review-card-header">
+            <h2>✍️ Share a Review or Recipe</h2>
+            <span style="font-size:0.85rem; color:#64748b;">Encrypted Cloud Storage (AWS S3)</span>
+        </div>
+
+        <div id="review-status-message" style="display:none;"></div>
+
+        <form id="review-upload-form">
+            <div class="review-form-grid">
+                <div>
+                    <div class="review-input-group">
+                        <label for="review-category">Category *</label>
+                        <select id="review-category" name="category" required>
+                            <option value="restaurant_review">🍽️ Restaurant Review (e.g. "This restaurant is great!")</option>
+                            <option value="dish_review">🍲 Dish Review & Rating</option>
+                            <option value="recipe">📖 Secret Family Recipe Sharing</option>
+                        </select>
+                    </div>
+
+                    <div class="review-input-group">
+                        <label for="review-title">Restaurant, Dish Name, or Recipe Title *</label>
+                        <input type="text" id="review-title" name="title" placeholder="e.g. Royal Bukhara - Authentic Dal Bukhara & Naan" required>
+                    </div>
+
+                    <div class="review-input-group">
+                        <label for="review-rating">Overall Rating *</label>
+                        <select id="review-rating" name="rating" required>
+                            <option value="5">⭐⭐⭐⭐⭐ (5/5 Outstanding Experience)</option>
+                            <option value="4">⭐⭐⭐⭐ (4/5 Great Food & Ambiance)</option>
+                            <option value="3">⭐⭐⭐ (3/5 Average / Satisfactory)</option>
+                            <option value="2">⭐⭐ (2/5 Below Average)</option>
+                            <option value="1">⭐ (1/5 Disappointing)</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div>
+                    <div class="review-input-group">
+                        <label for="review-comment">Review Description or Recipe Directions *</label>
+                        <textarea id="review-comment" name="comment" rows="4" placeholder="Tell the community what made this restaurant great, culinary highlights, or recipe ingredients & preparation steps..." required></textarea>
+                    </div>
+
+                    <div class="review-input-group">
+                        <label>Photo Attachment (Max 5MB) *</label>
+                        <label class="review-file-drop" for="review-file-input">
+                            <span id="file-name-display" style="display:block; font-size:0.92rem; color:#475569; margin: 15px 0;">
+                                Attach Restaurant Photo, Dish Photo, or Recipe Card (PNG, JPG, WEBP - Max 5MB)
+                            </span>
+                            <input type="file" id="review-file-input" name="file" accept="image/png, image/jpeg, image/webp" style="display:none;" required>
+                        </label>
+                    </div>
+
+                    <div style="margin-top: 15px; text-align: right;">
+                        <button type="submit" id="review-submit-btn" class="review-btn">Publish Review / Recipe</button>
+                    </div>
+                </div>
+            </div>
+        </form>
+    </section>
+
+    <!-- Section 2: User Private Uploads (Enforcing Data Isolation) -->
+    <section class="review-card">
+        <div class="review-card-header">
+            <h2>🔒 My Reviews & Shared Recipes</h2>
+            <span style="font-size:0.85rem; color:#64748b;">Private User Data (Protected by IAM & Role ACL)</span>
+        </div>
+        <p style="font-size:0.88rem; color:#64748b; margin-bottom:18px;">
+            These submissions belong strictly to your authenticated session. Another user attempting direct or API access is blocked with <strong>HTTP 403 Forbidden</strong>.
+        </p>
+        <div id="user-reviews-list" class="reviews-grid">
+            <p style="color:#64748b;">Loading your reviews...</p>
+        </div>
+    </section>
+
+    <!-- Section 3: Community Moderator Panel (Keeping Check on the Community) -->
+    <section class="review-card moderator-only" id="community-moderator-section" style="display:none; border: 2px solid #bae6fd;">
+        <div class="review-card-header">
+            <h2 style="color:#0369a1;">🛡️ Community Moderator Panel</h2>
+            <span class="role-badge" style="background:#0284c7;">Moderator Privileges Active</span>
+        </div>
+
+        <div class="moderator-banner">
+            <strong>Community Quality Check Active:</strong> As a Community Moderator, your role is to keep check on community reviews and shared recipes, prevent spam, inspect recommendations like "this restaurant is great", and approve, reject, or delete posts to keep the platform reliable.
+        </div>
+
+        <div style="overflow-x:auto;">
+            <table class="moderator-table">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Type</th>
+                        <th>User Email</th>
+                        <th>Title & Rating</th>
+                        <th>Status</th>
+                        <th>Date</th>
+                        <th>Moderation Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="moderator-reviews-tbody">
+                    <tr><td colspan="7" style="text-align:center; color:#64748b;">Loading community data...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </section>
+
+    <!-- Section 4: Public Community Showcase -->
+    <section class="review-card">
+        <div class="review-card-header">
+            <h2>🌟 Community Wall: Verified Reviews & Recipes</h2>
+            <span style="font-size:0.85rem; color:#64748b;">Curated Community Recommendations</span>
+        </div>
+
+        <!-- Filter bar -->
+        <div class="filter-bar">
+            <button class="filter-btn active" data-filter="all">All Posts</button>
+            <button class="filter-btn" data-filter="restaurant_review">🍽️ Restaurant Reviews</button>
+            <button class="filter-btn" data-filter="dish_review">🍲 Dish Reviews</button>
+            <button class="filter-btn" data-filter="recipe">📖 Shared Recipes</button>
+        </div>
+
+        <div id="public-reviews-grid" class="reviews-grid">
+            <p style="color:#64748b;">Loading verified community reviews and recipes...</p>
+        </div>
+    </section>
+
+</main>
+
+<footer class="footer">
+    <div class="footer-container">
+        <div class="footer-brand">
+            <h2>FOODIES</h2>
+            <p>Discover the best food, top restaurants, and recipes in your city.</p>
+        </div>
+        <div class="footer-contact">
+            <h4>Contact</h4>
+            <p>Email: support@foodies.com</p>
+            <p>Phone: +91 98765 43210</p>
+        </div>
+        <div class="footer-contact">
+            <h4>Quick Links</h4>
+            <a href="index.html">Home</a>
+            <a href="reviews.html">Reviews & Recipes</a>
+            <a href="orders.html">My Orders</a>
+            <a href="cart/cart.html">Cart</a>
+        </div>
+    </div>
+    <div class="footer-bottom">
+        &copy; 2026 FOODIES. All rights reserved.
+    </div>
+</footer>
+
+<script src="js/store.js"></script>
+<script src="js/reviews.js"></script>
+</body>
+</html>

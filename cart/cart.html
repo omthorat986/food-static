@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Your Cart - Foodies</title>
+    <link rel="stylesheet" href="../css/style.css">
+    <link rel="stylesheet" href="../css/cart.css">
+</head>
+<body data-base="../">
+
+<nav class="navbar">
+    <div class="logo-container"><a href="../index.html" class="brand-text" style="text-decoration:none;">FOODIES</a></div>
+    <div class="nav-links">
+        <a href="../index.html" class="nav-item">Home</a>
+        <a href="../orders.html" class="nav-item">View Orders</a>
+        <a href="cart.html" class="cart-btn">Cart (<span id="cart-count">0</span>)</a>
+    </div>
+</nav>
+
+<main class="cart-container">
+    <h2 class="cart-title">Your Shopping Cart</h2>
+
+    <div class="cart-table-wrapper">
+        <table class="foodies-table">
+            <thead>
+                <tr>
+                    <th>Dish</th>
+                    <th>Price</th>
+                    <th>Qty</th>
+                    <th>Subtotal</th>
+                    <th>Action</th>
+                </tr>
+            </thead>
+            <tbody id="cart-body">
+                <tr><td colspan="5" class="empty-msg">Your cart is empty!</td></tr>
+            </tbody>
+        </table>
+    </div>
+
+    <div class="cart-summary">
+        <div class="total-row">
+            <span>Grand Total:</span>
+            <span class="total-amount" id="cart-total">&#8377;0</span>
+        </div>
+        <div class="cart-actions">
+            <a href="../index.html" class="continue-btn">Continue Shopping</a>
+            <button type="button" class="clear-cart-btn" id="clear-cart-btn" hidden>Clear Cart</button>
+            <a href="../paypal/checkout.html" class="checkout-btn" id="checkout-btn">Place Order</a>
+        </div>
+        <p class="cart-demo-note">
+            Demo cart stored in your browser only. Placing an order shows a simulated
+            confirmation - no payment is processed.
+        </p>
+    </div>
+</main>
+
+<script src="../js/store.js"></script>
+<script src="../js/cart.js"></script>
+</body>
+</html>

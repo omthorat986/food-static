@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dish Details - Foodies</title>
+    <link rel="stylesheet" href="../css/cuisine.css">
+    <link rel="stylesheet" href="../css/food-details.css">
+</head>
+<body data-base="../">
+
+<nav class="menu-nav">
+    <div class="nav-content">
+        <a href="../index.html" class="logo">FOODIES</a>
+        <a href="../cart/cart.html" class="cart-pill">Cart (0)</a>
+    </div>
+</nav>
+
+<div class="menu-container">
+
+    <div class="details-card food-details-card" id="details-card" hidden>
+        <div class="details-img">
+            <img id="details-img" src="" alt="">
+        </div>
+        <div class="details-info">
+            <p class="details-category" id="details-category"></p>
+            <h1 id="details-name">Dish</h1>
+
+            <div class="details-meta">
+                <span class="rating-tag" id="details-rating" hidden></span>
+                <span class="details-time" id="details-time" hidden></span>
+            </div>
+
+            <p class="details-desc" id="details-desc"></p>
+            <p class="details-price" id="details-price"></p>
+
+            <form class="add-to-cart-form details-add" id="details-form" action="#" data-page="index.html">
+                <input type="hidden" name="product" value="">
+                <input type="hidden" name="price" value="0">
+                <input type="submit" value="ADD TO CART" class="add-to-cart">
+            </form>
+
+            <a class="details-back" id="details-back" href="../index.html">&#8592; Back to menu</a>
+        </div>
+    </div>
+
+    <div id="details-missing" hidden>
+        <h1 class="menu-title">Dish not found</h1>
+        <p class="details-desc">The dish you are looking for is not part of the Foodies menu.</p>
+        <p><a class="details-back" href="../index.html">&#8592; Back to Home</a></p>
+    </div>
+
+</div>
+
+<script src="../js/food-data.js"></script>
+<script src="../js/store.js"></script>
+<script src="../js/details.js"></script>
+</body>
+</html>

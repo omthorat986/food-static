@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login - Foodies</title>
+    <link rel="stylesheet" href="css/login.css">
+</head>
+
+<body data-base="">
+    <div class="login-box">
+        <h2>Login</h2>
+
+        <p id="auth-message" class="message"></p>
+
+        <form id="login-form" novalidate>
+            <input type="email" name="email" placeholder="Enter Email" required>
+            <input type="password" name="password" placeholder="Enter Password" required>
+            <label class="captcha-row">Captcha: <strong id="captcha-value">----</strong></label>
+            <input type="text" name="captcha" placeholder="Enter captcha" required>
+            <button type="submit">Login</button>
+        </form>
+
+        <p>Don't have an account? <a href="register.html">Register</a></p>
+
+        <div class="demo-note" style="text-align: left; background: #fdf2f2; border: 1px solid #fecaca; padding: 10px; border-radius: 6px; margin-top: 14px;">
+            <strong>Cloud Project Accounts:</strong><br>
+            • Moderator: <code>moderator@foodies.com</code> / <code>Mod@123</code> (checks & moderates community)<br>
+            • Admin: <code>admin@foodies.com</code> / <code>Admin@123</code><br>
+            • User: <code>user@foodies.com</code> / <code>User@123</code>
+        </div>
+    </div>
+
+    <script src="js/store.js"></script>
+    <script src="js/auth-demo.js"></script>
+</body>
+</html>

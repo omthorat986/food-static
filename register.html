@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Register - Foodies</title>
+    <link rel="stylesheet" href="css/register.css">
+</head>
+
+<body data-base="">
+    <div class="register-box">
+        <h2>Create Account</h2>
+
+        <p id="auth-message" class="message"></p>
+
+        <form id="register-form" novalidate>
+            <input type="text" name="name" placeholder="Enter Name" required>
+            <input type="email" name="email" placeholder="Enter Email" required>
+            <input type="password" name="password" placeholder="Enter Password" required>
+            <button type="submit">Register</button>
+            <p>Already have an account? <a href="login.html">Login</a></p>
+        </form>
+
+        <p class="demo-note" style="text-align: left; background: #f0fdf4; border: 1px solid #bbf7d0; padding: 10px; border-radius: 6px; margin-top: 14px;">
+            <strong>Cloud Security:</strong> Accounts are stored in SQLite database with secure bcrypt password hashing and session management.
+        </p>
+    </div>
+
+    <script src="js/store.js"></script>
+    <script src="js/auth-demo.js"></script>
+</body>
+</html>

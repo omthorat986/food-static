@@ -1,0 +1,43 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowS3UploadsPrefixOnly",
+      "Effect": "Allow",
+      "Action": [
+        "s3:PutObject",
+        "s3:GetObject",
+        "s3:DeleteObject"
+      ],
+      "Resource": "arn:aws:s3:::foodies-cloud-storage-bucket/uploads/*"
+    },
+    {
+      "Sid": "AllowS3BucketListWithUploadsPrefix",
+      "Effect": "Allow",
+      "Action": [
+        "s3:ListBucket"
+      ],
+      "Resource": "arn:aws:s3:::foodies-cloud-storage-bucket",
+      "Condition": {
+        "StringLike": {
+          "s3:prefix": [
+            "uploads/*",
+            "uploads/"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "AllowCloudWatchAgentLogsAndMetrics",
+      "Effect": "Allow",
+      "Action": [
+        "cloudwatch:PutMetricData",
+        "logs:CreateLogGroup",
+        "logs:CreateLogStream",
+        "logs:PutLogEvents",
+        "logs:DescribeLogStreams"
+      ],
+      "Resource": "*"
+    }
+  ]
+}

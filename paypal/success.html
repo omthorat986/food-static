@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Order Confirmation - Foodies</title>
+    <link rel="stylesheet" href="../css/success.css">
+</head>
+
+<body data-base="../" data-view="success">
+
+<div class="navbar">
+    <a href="../index.html" style="color:inherit;text-decoration:none;">FOODIES</a>
+</div>
+
+<div class="payment-container">
+
+    <h2>Order Placed</h2>
+
+    <h3>Order Confirmed</h3>
+
+    <p>Your demo order has been placed successfully!</p>
+
+    <div class="order-details" id="order-details"></div>
+
+    <div id="order-fallback" hidden>
+        <p>No recent order was found in this browser.</p>
+    </div>
+
+    <p>
+        This is a simulated confirmation for demonstration only. No real payment
+        was processed and no transaction took place.
+    </p>
+
+    <a href="../orders.html">
+        <button type="button">View Orders</button>
+    </a>
+
+    <a href="../index.html">
+        <button type="button">Back to Home</button>
+    </a>
+
+</div>
+
+<script src="../js/store.js"></script>
+<script src="../js/checkout.js"></script>
+</body>
+</html>

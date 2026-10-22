@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Checkout - Foodies</title>
+    <link rel="stylesheet" href="../css/checkout.css">
+</head>
+
+<body data-base="../" data-view="checkout">
+
+<div class="navbar">
+    <a href="../index.html" style="color:inherit;text-decoration:none;">FOODIES</a>
+</div>
+
+<div class="payment-container">
+
+    <h2>Order Details &amp; Checkout</h2>
+
+    <div class="order-summary">
+        <h3>Order Summary</h3>
+        <div class="summary-item">
+            <span>Items in cart:</span>
+            <span class="amount-value" id="summary-items">0</span>
+        </div>
+        <div class="summary-item">
+            <span>Total Amount (INR):</span>
+            <span class="amount-value" id="summary-total">&#8377;0</span>
+        </div>
+    </div>
+
+    <p id="checkout-message" class="message"></p>
+
+    <form id="checkout-form" novalidate>
+
+        <input type="text" name="name" placeholder="Enter your name" required>
+
+        <input type="text" name="address" placeholder="Enter your address" required>
+
+        <input type="tel" name="phone" placeholder="Enter your phone number" required>
+
+        <button type="submit">Place Demo Order</button>
+
+    </form>
+
+    <div id="checkout-empty" hidden>
+        <p>Your cart is empty.</p>
+        <p><a href="../index.html">Browse the menu</a> to add dishes first.</p>
+    </div>
+
+    <p class="demo-note">
+        Demonstration checkout only. No payment gateway is used and no card or
+        PayPal details are collected. The order is saved in your browser.
+    </p>
+
+</div>
+
+<script src="../js/store.js"></script>
+<script src="../js/checkout.js"></script>
+</body>
+</html>

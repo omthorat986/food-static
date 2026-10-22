@@ -1,0 +1,109 @@
+.cart-container {
+    max-width: 900px;
+    margin: 50px auto;
+    padding: 20px;
+}
+
+.cart-title {
+    font-size: 2rem;
+    font-weight: 700;
+    margin-bottom: 30px;
+    color: #1c1c1c;
+}
+
+.cart-table-wrapper {
+    background: white;
+    border-radius: 12px;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.08);
+    overflow: hidden;
+    margin-bottom: 30px;
+}
+
+.foodies-table {
+    width: 100%;
+    border-collapse: collapse;
+    text-align: left;
+}
+
+.foodies-table th {
+    background-color: #f8f8f8;
+    padding: 15px;
+    font-weight: 600;
+    color: #696969;
+    border-bottom: 1px solid #eee;
+}
+
+.foodies-table td {
+    padding: 15px;
+    border-bottom: 1px solid #eee;
+}
+
+.product-name {
+    font-weight: 600;
+    color: #1c1c1c;
+}
+
+.subtotal {
+    font-weight: 700;
+}
+
+.remove-link {
+    color: #ef4f5f;
+    text-decoration: none;
+    font-weight: 600;
+    font-size: 0.9rem;
+}
+
+.empty-msg {
+    text-align: center;
+    padding: 40px !important;
+    color: #999;
+}
+
+/* Summary Section */
+.cart-summary {
+    background: white;
+    padding: 25px;
+    border-radius: 12px;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.08);
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+}
+
+.total-row {
+    font-size: 1.5rem;
+    font-weight: 700;
+    margin-bottom: 20px;
+}
+
+.total-amount {
+    color: #ef4f5f;
+    margin-left: 10px;
+}
+
+.cart-actions {
+    display: flex;
+    gap: 15px;
+}
+
+.continue-btn {
+    text-decoration: none;
+    color: #696969;
+    padding: 12px 25px;
+    font-weight: 600;
+}
+
+.checkout-btn {
+    background: #ef4f5f;
+    color: white;
+    text-decoration: none;
+    padding: 12px 30px;
+    border-radius: 25px;
+    font-weight: 700;
+    box-shadow: 0 3px 10px rgba(239, 79, 95, 0.3);
+}
+
+.checkout-btn:hover {
+    background: #d63b4b;
+}
