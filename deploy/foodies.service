@@ -3,33 +3,41 @@ Description=Foodies Cloud Python WSGI Application
 After=network.target
 
 [Service]
-Type=notify
-User=ubuntu
-Group=ubuntu
-WorkingDirectory=/home/ubuntu/Foodies-Static
-Environment="PATH=/home/ubuntu/Foodies-Static/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin"
-Environment="STORAGE_MODE=s3"
-Environment="S3_BUCKET=foodies-cloud-storage-bucket"
-Environment="AWS_REGION=us-east-1"
-Environment="SECRET_KEY=foodies-super-secret-key-change-in-prod"
+Type=simple
+User=foodies
+Group=foodies
+WorkingDirectory=/opt/foodies
+
+# Securely load production secrets and configuration
+EnvironmentFile=/etc/foodies/foodies.env
+Environment="PATH=/opt/foodies/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin"
 Environment="PORT=8080"
 Environment="HOST=127.0.0.1"
 
-ExecStart=/home/ubuntu/Foodies-Static/venv/bin/gunicorn \
+# Ensure runtime directories exist and apply schema migrations idempotently
+ExecStartPre=/bin/mkdir -p /var/log/foodies /var/lib/foodies
+ExecStartPre=/opt/foodies/venv/bin/python manage.py migrate
+
+ExecStart=/opt/foodies/venv/bin/gunicorn \
     --workers 3 \
     --threads 2 \
     --bind 127.0.0.1:8080 \
     --timeout 120 \
-    --access-logfile /home/ubuntu/Foodies-Static/logs/access.log \
-    --error-logfile /home/ubuntu/Foodies-Static/logs/error.log \
+    --access-logfile /var/log/foodies/access.log \
+    --error-logfile /var/log/foodies/error.log \
     app:app
 
 ExecReload=/bin/kill -s HUP $MAINPID
 KillMode=mixed
-TimeoutStopSec=5
+TimeoutStopSec=10
 PrivateTmp=true
 Restart=always
 RestartSec=5
+
+# Restrict filesystem access and grant write access only to data and log folders
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/var/lib/foodies /var/log/foodies -/tmp
 
 [Install]
 WantedBy=multi-user.target

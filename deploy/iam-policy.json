@@ -9,7 +9,7 @@
         "s3:GetObject",
         "s3:DeleteObject"
       ],
-      "Resource": "arn:aws:s3:::foodies-cloud-storage-bucket/uploads/*"
+      "Resource": "arn:aws:s3:::YOUR_BUCKET_NAME/uploads/*"
     },
     {
       "Sid": "AllowS3BucketListWithUploadsPrefix",
@@ -17,7 +17,7 @@
       "Action": [
         "s3:ListBucket"
       ],
-      "Resource": "arn:aws:s3:::foodies-cloud-storage-bucket",
+      "Resource": "arn:aws:s3:::YOUR_BUCKET_NAME",
       "Condition": {
         "StringLike": {
           "s3:prefix": [
@@ -35,7 +35,10 @@
         "logs:CreateLogGroup",
         "logs:CreateLogStream",
         "logs:PutLogEvents",
-        "logs:DescribeLogStreams"
+        "logs:DescribeLogStreams",
+        "logs:DescribeLogGroups",
+        "logs:PutRetentionPolicy",
+        "ec2:DescribeTags"
       ],
       "Resource": "*"
     }
